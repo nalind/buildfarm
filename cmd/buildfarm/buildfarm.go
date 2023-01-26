@@ -6,10 +6,10 @@ import (
 	"os"
 
 	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/unshare"
 	"github.com/nalind/buildfarm"
-	"github.com/sirupsen/logrus"
 )
 
 func main() {
@@ -18,9 +18,18 @@ func main() {
 	}
 	unshare.MaybeReexecUsingUserNamespace(true)
 
-	logrus.SetLevel(logrus.DebugLevel)
+	var storeOptions *storage.StoreOptions
+	defaultStoreOptions, err := storage.DefaultStoreOptionsAutoDetectUID()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "selecting storage options: %v", err)
+		return
+	}
+	storeOptions = &defaultStoreOptions
+
+	// logrus.SetLevel(logrus.DebugLevel)
+
 	ctx := context.TODO()
-	farm, err := buildfarm.GetFarm(ctx, "")
+	farm, err := buildfarm.GetFarm(ctx, "", storeOptions, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "initializing: %v\n", err)
 		return
