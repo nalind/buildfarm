@@ -40,10 +40,26 @@ func main() {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "status: %v\n", status)
+
+	platforms, err := farm.NativePlatforms(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "platforms: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "native platforms: %v\n", platforms)
+	platforms, err = farm.EmulatedPlatforms(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "platforms: %v\n", err)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "emulated platforms: %v\n", platforms)
+
 	schedule, err := farm.Schedule(ctx, nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "schedule: %v\n", err)
 	}
+	fmt.Fprintf(os.Stderr, "schedule: %v\n", schedule)
+
 	var buildOptions entities.BuildOptions
 	buildOptions.ContextDirectory = "."
 	buildOptions.Layers = true
@@ -51,4 +67,5 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
+	fmt.Fprintf(os.Stderr, "build: ok\n")
 }

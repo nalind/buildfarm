@@ -31,6 +31,8 @@ type podmanLocal struct {
 
 type listLocal struct {
 	listName     string
+	flagSet      *pflag.FlagSet
+	config       *config.Config
 	storeOptions storage.StoreOptions
 }
 
@@ -65,7 +67,7 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 	return &local, nil
 }
 
-func (l *podmanLocal) with(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
+func (l *podmanLocal) WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
 	podmanConfig := entities.PodmanConfig{
 		FlagSet:       l.flagSet,
 		EngineMode:    entities.ABIMode,
@@ -78,7 +80,7 @@ func (l *podmanLocal) with(ctx context.Context, fn func(ctx context.Context, eng
 	if err != nil {
 		return fmt.Errorf("initializing local image engine: %w", err)
 	}
-	defer engine.Shutdown(ctx)
+	// defer engine.Shutdown(ctx) - we actually get the same runtime every time, and we get errors if we try to use it after shutting it down. TODO: complain about it, loudly.
 	err = fn(ctx, engine)
 	if err != nil {
 		return err
@@ -93,13 +95,13 @@ func (l *podmanLocal) Info(ctx context.Context, options InfoOptions) (*Info, err
 }
 
 func (l *podmanLocal) Status(ctx context.Context) error {
-	return l.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
+	return l.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
 }
 
 func (r *podmanLocal) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
-	err := r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		var err error
 		theseOptions := options
 		theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
@@ -121,7 +123,7 @@ func (r *podmanLocal) Build(ctx context.Context, reference string, containerFile
 }
 
 func (r *podmanLocal) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
-	err = r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: options.SaveFile,
@@ -135,7 +137,18 @@ func (r *podmanLocal) PullToFile(ctx context.Context, options PullToFileOptions)
 }
 
 func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error) {
-	br, err := options.Destination.Exists(ctx, options.ImageID)
+	destination := options.Destination
+
+	var br *entities.BoolReport
+	if destination == nil {
+		err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+			var err error
+			br, err = engine.Exists(ctx, options.ImageID)
+			return err
+		})
+	} else {
+		br, err = destination.Exists(ctx, options.ImageID)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +163,7 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
-	err = r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: tempFile.Name(),
@@ -167,54 +180,80 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 	loadOptions := entities.ImageLoadOptions{
 		Input: tempFile.Name(),
 	}
-	if _, err = options.Destination.Load(ctx, loadOptions); err != nil {
-		return "", fmt.Errorf("loading image %q: %w", options.ImageID, err)
+	if destination == nil {
+		err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+			_, err := engine.Load(ctx, loadOptions)
+			return err
+		})
+	} else {
+		_, err = destination.Load(ctx, loadOptions)
+	}
+	if err != nil {
+		return "", err
 	}
 
 	return istorage.Transport.Name() + ":" + options.ImageID, nil
 }
 
-func NewPodmanLocalListBuilder(listName string, storeOptions *storage.StoreOptions) (ListBuilder, error) {
-	options := storage.StoreOptions{}
-	if storeOptions != nil {
-		options = *storeOptions
+func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptions *storage.StoreOptions) (ListBuilder, error) {
+	if storeOptions == nil {
+		storeOptions = &storage.StoreOptions{}
 	}
-	return &listLocal{listName: listName, storeOptions: options}, nil
+	custom, err := config.ReadCustomConfig()
+	if err != nil {
+		return nil, fmt.Errorf("reading custom config: %w", err)
+	}
+	ll := &listLocal{
+		listName: listName,
+		flagSet:  flags,
+		config:   custom,
+		storeOptions: storage.StoreOptions{
+			GraphRoot:          storeOptions.GraphRoot,
+			RunRoot:            storeOptions.RunRoot,
+			GraphDriverName:    storeOptions.GraphDriverName,
+			GraphDriverOptions: append([]string{}, storeOptions.GraphDriverOptions...),
+		},
+	}
+	return ll, nil
 }
 
-func (m *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuilder) error {
-	localRuntime, err := libimage.RuntimeFromStoreOptions(nil, &m.storeOptions)
+func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuilder) error {
+	podmanConfig := entities.PodmanConfig{
+		FlagSet:       l.flagSet,
+		EngineMode:    entities.ABIMode,
+		Config:        l.config,
+		Runroot:       l.storeOptions.RunRoot,
+		StorageDriver: l.storeOptions.GraphDriverName,
+		StorageOpts:   l.storeOptions.GraphDriverOptions,
+	}
+	localEngine, err := infra.NewImageEngine(&podmanConfig)
+	if err != nil {
+		return fmt.Errorf("initializing local image engine: %w", err)
+	}
+	defer localEngine.Shutdown(ctx)
+
+	localRuntime, err := libimage.RuntimeFromStoreOptions(nil, &l.storeOptions)
 	if err != nil {
 		return fmt.Errorf("initializing local manifest list storage: %w", err)
 	}
 	defer localRuntime.Shutdown(false)
 
 	// find/create the list
-	list, err := localRuntime.LookupManifestList(m.listName)
+	list, err := localRuntime.LookupManifestList(l.listName)
 	if err != nil {
-		list, err = localRuntime.CreateManifestList(m.listName)
+		list, err = localRuntime.CreateManifestList(l.listName)
 	}
 	if err != nil {
-		return fmt.Errorf("creating manifest list %q: %w", m.listName, err)
-	}
-
-	// clear the list in case it already existed
-	listContents, err := list.Inspect()
-	if err != nil {
-		return fmt.Errorf("inspecting list %q: %w", m.listName, err)
-	}
-	for _, instance := range listContents.Manifests {
-		if err := list.RemoveInstance(instance.Digest); err != nil {
-			return fmt.Errorf("removing instance %q from list %q: %w", instance.Digest, m.listName, err)
-		}
+		return fmt.Errorf("creating manifest list %q: %w", l.listName, err)
 	}
 
 	// pull the images into local storage
 	refs := make(map[string]ImageBuilder)
 	for image, engine := range images {
 		pullOptions := PullToLocalOptions{
-			ImageID:    image.ImageID,
-			SaveFormat: image.SaveFormat,
+			ImageID:     image.ImageID,
+			SaveFormat:  image.SaveFormat,
+			Destination: localEngine,
 		}
 		ref, err := engine.PullToLocal(ctx, pullOptions)
 		if err != nil {
@@ -223,8 +262,19 @@ func (m *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 		refs[ref] = engine
 	}
 
+	// clear the list in case it already existed
+	listContents, err := list.Inspect()
+	if err != nil {
+		return fmt.Errorf("inspecting list %q: %w", l.listName, err)
+	}
+	for _, instance := range listContents.Manifests {
+		if err := list.RemoveInstance(instance.Digest); err != nil {
+			return fmt.Errorf("removing instance %q from list %q: %w", instance.Digest, l.listName, err)
+		}
+	}
+
 	// add the images to the list
-	for ref, _ := range refs {
+	for ref := range refs {
 		options := libimage.ManifestListAddOptions{}
 		if _, err := list.Add(ctx, ref, &options); err != nil {
 			return fmt.Errorf("adding image %q to list: %w", ref, err)

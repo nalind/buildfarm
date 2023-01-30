@@ -2,6 +2,7 @@ package buildfarm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -51,7 +52,7 @@ func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name
 	return &remote, nil
 }
 
-func (r *podmanRemote) with(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
+func (r *podmanRemote) WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
 	var connctx context.Context
 	var err error
 	if r.identity != "" {
@@ -82,7 +83,7 @@ func (r *podmanRemote) with(ctx context.Context, fn func(ctx context.Context, en
 
 func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, error) {
 	var nativePlatform string
-	err := r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		info, err := system.Info(ctx, &system.InfoOptions{})
 		if err != nil {
 			return fmt.Errorf("retrieving host info from %q: %w", r.name, err)
@@ -97,13 +98,13 @@ func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, er
 }
 
 func (r *podmanRemote) Status(ctx context.Context) error {
-	return r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
+	return r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
 }
 
 func (r *podmanRemote) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
-	err := r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		var err error
 		theseOptions := options
 		theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
@@ -125,7 +126,7 @@ func (r *podmanRemote) Build(ctx context.Context, reference string, containerFil
 }
 
 func (r *podmanRemote) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
-	err = r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: options.SaveFile,
@@ -145,7 +146,7 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
-	err = r.with(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: tempFile.Name(),
@@ -161,8 +162,12 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	loadOptions := entities.ImageLoadOptions{
 		Input: tempFile.Name(),
 	}
-	if _, err = options.Destination.Load(ctx, loadOptions); err != nil {
-		return "", fmt.Errorf("loading image %q: %w", options.ImageID, err)
+	if options.Destination == nil {
+		return "", errors.New("internal error: options.Destination not set")
+	} else {
+		if _, err = options.Destination.Load(ctx, loadOptions); err != nil {
+			return "", fmt.Errorf("loading image %q: %w", options.ImageID, err)
+		}
 	}
 	name := fmt.Sprintf("%s:%s", istorage.Transport.Name(), options.ImageID)
 	return name, err
