@@ -69,12 +69,13 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 
 func (l *podmanLocal) WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
 	podmanConfig := entities.PodmanConfig{
-		FlagSet:       l.flagSet,
-		EngineMode:    entities.ABIMode,
-		Config:        l.config,
-		Runroot:       l.storeOptions.RunRoot,
-		StorageDriver: l.storeOptions.GraphDriverName,
-		StorageOpts:   l.storeOptions.GraphDriverOptions,
+		FlagSet:                  l.flagSet,
+		EngineMode:               entities.ABIMode,
+		ContainersConf:           &config.Config{},
+		ContainersConfDefaultsRO: l.config,
+		Runroot:                  l.storeOptions.RunRoot,
+		StorageDriver:            l.storeOptions.GraphDriverName,
+		StorageOpts:              l.storeOptions.GraphDriverOptions,
 	}
 	engine, err := infra.NewImageEngine(&podmanConfig)
 	if err != nil {
@@ -219,12 +220,13 @@ func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptio
 
 func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuilder) error {
 	podmanConfig := entities.PodmanConfig{
-		FlagSet:       l.flagSet,
-		EngineMode:    entities.ABIMode,
-		Config:        l.config,
-		Runroot:       l.storeOptions.RunRoot,
-		StorageDriver: l.storeOptions.GraphDriverName,
-		StorageOpts:   l.storeOptions.GraphDriverOptions,
+		FlagSet:                  l.flagSet,
+		EngineMode:               entities.ABIMode,
+		ContainersConf:           &config.Config{},
+		ContainersConfDefaultsRO: l.config,
+		Runroot:                  l.storeOptions.RunRoot,
+		StorageDriver:            l.storeOptions.GraphDriverName,
+		StorageOpts:              l.storeOptions.GraphDriverOptions,
 	}
 	localEngine, err := infra.NewImageEngine(&podmanConfig)
 	if err != nil {
