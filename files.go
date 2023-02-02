@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/containers/common/libimage/manifests"
 	"github.com/containers/common/pkg/supplemented"
@@ -15,6 +16,7 @@ import (
 	"github.com/containers/image/v5/signature"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
+	"github.com/hashicorp/go-multierror"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -58,31 +60,45 @@ func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	list := manifests.Create()
 
 	// pull the images into the temporary directory
+	var pullGroup multierror.Group
 	refs := make(map[BuildReport]types.ImageReference)
+	var refsMutex sync.Mutex
 	for image, engine := range images {
+		image := image
+		engine := engine
 		tempFile, err := ioutil.TempFile(tempDir, "archive-*.tar")
 		if err != nil {
 			return err
 		}
 		defer tempFile.Close()
-		pullOptions := PullToFileOptions{
-			ImageID:    image.ImageID,
-			SaveFormat: image.SaveFormat,
-			SaveFile:   tempFile.Name(),
-		}
-		if image.SaveFormat == manifest.DockerV2Schema2MediaType {
-			listFormat = manifest.DockerV2ListMediaType
-			imageFormat = manifest.DockerV2Schema2MediaType
-		}
-		reference, err := engine.PullToFile(ctx, pullOptions)
-		if err != nil {
-			return fmt.Errorf("pulling image %q to temporary directory: %w", image, err)
-		}
-		ref, err := alltransports.ParseImageName(reference)
-		if err != nil {
-			return fmt.Errorf("pulling image %q to temporary directory: %w", image, err)
-		}
-		refs[image] = ref
+		pullGroup.Go(func() error {
+			pullOptions := PullToFileOptions{
+				ImageID:    image.ImageID,
+				SaveFormat: image.SaveFormat,
+				SaveFile:   tempFile.Name(),
+			}
+			if image.SaveFormat == manifest.DockerV2Schema2MediaType {
+				listFormat = manifest.DockerV2ListMediaType
+				imageFormat = manifest.DockerV2Schema2MediaType
+			}
+			reference, err := engine.PullToFile(ctx, pullOptions)
+			if err != nil {
+				return fmt.Errorf("pulling image %q to temporary directory: %w", image, err)
+			}
+			ref, err := alltransports.ParseImageName(reference)
+			if err != nil {
+				return fmt.Errorf("pulling image %q to temporary directory: %w", image, err)
+			}
+			refsMutex.Lock()
+			defer refsMutex.Unlock()
+			refs[image] = ref
+			return nil
+		})
+	}
+	pullErrors := pullGroup.Wait()
+	err = pullErrors.ErrorOrNil()
+	if err != nil {
+		return fmt.Errorf("building: %w", err)
 	}
 
 	// add the images to the list

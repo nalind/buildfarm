@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/pkg/parse"
@@ -15,6 +16,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra"
 	"github.com/containers/storage"
+	"github.com/hashicorp/go-multierror"
 	"github.com/nalind/buildfarm/emulation"
 	"github.com/spf13/pflag"
 )
@@ -250,18 +252,32 @@ func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	}
 
 	// pull the images into local storage
+	var pullGroup multierror.Group
 	refs := make(map[string]ImageBuilder)
+	var refsMutex sync.Mutex
 	for image, engine := range images {
+		image := image
+		engine := engine
 		pullOptions := PullToLocalOptions{
 			ImageID:     image.ImageID,
 			SaveFormat:  image.SaveFormat,
 			Destination: localEngine,
 		}
-		ref, err := engine.PullToLocal(ctx, pullOptions)
-		if err != nil {
-			return fmt.Errorf("pulling image %q to local storage: %w", image, err)
-		}
-		refs[ref] = engine
+		pullGroup.Go(func() error {
+			ref, err := engine.PullToLocal(ctx, pullOptions)
+			if err != nil {
+				return fmt.Errorf("pulling image %q to local storage: %w", image, err)
+			}
+			refsMutex.Lock()
+			defer refsMutex.Unlock()
+			refs[ref] = engine
+			return nil
+		})
+	}
+	pullErrors := pullGroup.Wait()
+	err = pullErrors.ErrorOrNil()
+	if err != nil {
+		return fmt.Errorf("building: %w", err)
 	}
 
 	// clear the list in case it already existed
