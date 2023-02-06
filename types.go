@@ -7,7 +7,6 @@ import (
 )
 
 type ImageBuilder interface {
-	WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error
 	Info(ctx context.Context, options InfoOptions) (*Info, error)
 	Status(ctx context.Context) error
 	Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error)

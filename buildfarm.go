@@ -118,13 +118,15 @@ func (f *Farm) Status(ctx context.Context) (map[string]error, error) {
 
 // ForEach runs the called function once for every node in the farm and
 // collects their results.  If the local node is configured, it is included.
-func (f *Farm) ForEach(ctx context.Context, fn func(context.Context, string, entities.ImageEngine) error) error {
+func (f *Farm) ForEach(ctx context.Context, fn func(context.Context, string, ImageBuilder) (bool, error)) error {
 	var merr *multierror.Error
-	for i, conn := range f.Connections {
-		if err := f.Connections[i].Builder.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-			return fn(ctx, conn.Name, engine)
-		}); err != nil {
+	for _, conn := range f.Connections {
+		stop, err := fn(ctx, conn.Name, conn.Builder)
+		if err != nil {
 			merr = multierror.Append(merr, fmt.Errorf("%s: %w", conn.Name, err))
+		}
+		if stop {
+			break
 		}
 	}
 	var err error
