@@ -52,7 +52,7 @@ func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name
 	return &remote, nil
 }
 
-func (r *podmanRemote) WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
+func (r *podmanRemote) withEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
 	var connctx context.Context
 	var err error
 	if r.identity != "" {
@@ -83,7 +83,7 @@ func (r *podmanRemote) WithEngine(ctx context.Context, fn func(ctx context.Conte
 
 func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, error) {
 	var nativePlatform string
-	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		info, err := system.Info(ctx, &system.InfoOptions{})
 		if err != nil {
 			return fmt.Errorf("retrieving host info from %q: %w", r.name, err)
@@ -98,13 +98,13 @@ func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, er
 }
 
 func (r *podmanRemote) Status(ctx context.Context) error {
-	return r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
+	return r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
 }
 
 func (r *podmanRemote) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
-	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		var err error
 		theseOptions := options
 		theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
@@ -126,7 +126,7 @@ func (r *podmanRemote) Build(ctx context.Context, reference string, containerFil
 }
 
 func (r *podmanRemote) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
-	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: options.SaveFile,
@@ -146,7 +146,7 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
-	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: tempFile.Name(),

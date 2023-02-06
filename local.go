@@ -69,7 +69,7 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 	return &local, nil
 }
 
-func (l *podmanLocal) WithEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
+func (l *podmanLocal) withEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
 	podmanConfig := entities.PodmanConfig{
 		FlagSet:                  l.flagSet,
 		EngineMode:               entities.ABIMode,
@@ -98,13 +98,13 @@ func (l *podmanLocal) Info(ctx context.Context, options InfoOptions) (*Info, err
 }
 
 func (l *podmanLocal) Status(ctx context.Context) error {
-	return l.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
+	return l.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
 }
 
 func (r *podmanLocal) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
-	err := r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		var err error
 		theseOptions := options
 		theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
@@ -126,7 +126,7 @@ func (r *podmanLocal) Build(ctx context.Context, reference string, containerFile
 }
 
 func (r *podmanLocal) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
-	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: options.SaveFile,
@@ -144,7 +144,7 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 
 	var br *entities.BoolReport
 	if destination == nil {
-		err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+		err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 			var err error
 			br, err = engine.Exists(ctx, options.ImageID)
 			return err
@@ -166,7 +166,7 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
 
-	err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 		saveOptions := entities.ImageSaveOptions{
 			Format: options.SaveFormat,
 			Output: tempFile.Name(),
@@ -184,7 +184,7 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 		Input: tempFile.Name(),
 	}
 	if destination == nil {
-		err = r.WithEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+		err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
 			_, err := engine.Load(ctx, loadOptions)
 			return err
 		})
