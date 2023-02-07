@@ -312,6 +312,7 @@ func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 		var rmGroup multierror.Group
 		for image, engine := range images {
 			image := image
+			engine := engine
 			rmGroup.Go(func() error {
 				return engine.RemoveImage(ctx, RemoveImageOptions{ImageID: image.ImageID})
 			})
