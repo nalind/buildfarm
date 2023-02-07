@@ -334,11 +334,15 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 
 	// Decide where the final result will be stored.
 	var listBuilder ListBuilder
+	listBuilderOptions := ListBuilderOptions{
+		ForceRemoveIntermediates: options.ForceRmIntermediateCtrs,
+		RemoveIntermediates:      options.RemoveIntermediateCtrs,
+	}
 	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
 		location := strings.TrimPrefix(reference, "dir:")
-		listBuilder, err = NewFileListBuilder(location)
+		listBuilder, err = NewFileListBuilder(location, listBuilderOptions)
 	} else {
-		listBuilder, err = NewPodmanLocalListBuilder(reference, f.FlagSet, f.storeOptions)
+		listBuilder, err = NewPodmanLocalListBuilder(reference, f.FlagSet, f.storeOptions, listBuilderOptions)
 	}
 	if err != nil {
 		return fmt.Errorf("preparing to build list: %w", err)

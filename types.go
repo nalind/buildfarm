@@ -12,6 +12,7 @@ type ImageBuilder interface {
 	Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error)
 	PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error)
 	PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error)
+	RemoveImage(ctx context.Context, options RemoveImageOptions) error
 }
 
 type InfoOptions struct {
@@ -37,6 +38,15 @@ type PullToLocalOptions struct {
 	ImageID     string
 	SaveFormat  string
 	Destination entities.ImageEngine
+}
+
+type RemoveImageOptions struct {
+	ImageID string
+}
+
+type ListBuilderOptions struct {
+	ForceRemoveIntermediates bool
+	RemoveIntermediates      bool
 }
 
 type ListBuilder interface {

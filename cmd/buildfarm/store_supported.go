@@ -12,6 +12,12 @@ import (
 
 var globalStore storage.Store
 
+func init() {
+	if defaultStoreOptions, err := storage.DefaultStoreOptionsAutoDetectUID(); err == nil {
+		globalStorageOptions = &defaultStoreOptions
+	}
+}
+
 func getDefaultStoreOptions() *storage.StoreOptions {
 	defaultStoreOptions, err := storage.DefaultStoreOptionsAutoDetectUID()
 	if err != nil {

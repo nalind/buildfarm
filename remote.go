@@ -14,6 +14,7 @@ import (
 	"github.com/containers/podman/v4/pkg/bindings/system"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra"
+	"github.com/hashicorp/go-multierror"
 	"github.com/spf13/pflag"
 )
 
@@ -171,4 +172,30 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	}
 	name := fmt.Sprintf("%s:%s", istorage.Transport.Name(), options.ImageID)
 	return name, err
+}
+
+func (r *podmanRemote) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
+	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+		rmOptions := entities.ImageRemoveOptions{}
+		report, errs := engine.Remove(ctx, []string{options.ImageID}, rmOptions)
+		if len(errs) > 0 {
+			if len(errs) > 1 {
+				var err *multierror.Error
+				for _, e := range errs {
+					err = multierror.Append(err, e)
+				}
+				if multi := err.ErrorOrNil(); multi != nil {
+					return fmt.Errorf("removing intermediate image %q from remote %q: %w", options.ImageID, r.name, multi)
+				}
+				return nil
+			} else {
+				return fmt.Errorf("removing intermediate image %q from local storage: %w", options.ImageID, errs[0])
+			}
+		}
+		if report.ExitCode != 0 {
+			return fmt.Errorf("removing intermediate image %q from remote %q: status %d", options.ImageID, r.name, report.ExitCode)
+		}
+		return nil
+	})
+	return err
 }

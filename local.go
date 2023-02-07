@@ -36,6 +36,7 @@ type listLocal struct {
 	flagSet      *pflag.FlagSet
 	config       *config.Config
 	storeOptions storage.StoreOptions
+	options      ListBuilderOptions
 }
 
 func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, storeOptions *storage.StoreOptions) (ImageBuilder, error) {
@@ -198,7 +199,33 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 	return istorage.Transport.Name() + ":" + options.ImageID, nil
 }
 
-func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptions *storage.StoreOptions) (ListBuilder, error) {
+func (r *podmanLocal) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
+	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
+		rmOptions := entities.ImageRemoveOptions{}
+		report, errs := engine.Remove(ctx, []string{options.ImageID}, rmOptions)
+		if len(errs) > 0 {
+			if len(errs) > 1 {
+				var err *multierror.Error
+				for _, e := range errs {
+					err = multierror.Append(err, e)
+				}
+				if multi := err.ErrorOrNil(); multi != nil {
+					return fmt.Errorf("removing intermediate image %q from local storage: %w", options.ImageID, multi)
+				}
+				return nil
+			} else {
+				return fmt.Errorf("removing intermediate image %q from local storage: %w", options.ImageID, errs[0])
+			}
+		}
+		if report.ExitCode != 0 {
+			return fmt.Errorf("removing intermediate image %q from local storage: status %d", options.ImageID, report.ExitCode)
+		}
+		return nil
+	})
+	return err
+}
+
+func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptions *storage.StoreOptions, options ListBuilderOptions) (ListBuilder, error) {
 	if storeOptions == nil {
 		storeOptions = &storage.StoreOptions{}
 	}
@@ -216,6 +243,7 @@ func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptio
 			GraphDriverName:    storeOptions.GraphDriverName,
 			GraphDriverOptions: append([]string{}, storeOptions.GraphDriverOptions...),
 		},
+		options: options,
 	}
 	return ll, nil
 }
@@ -278,6 +306,22 @@ func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	err = pullErrors.ErrorOrNil()
 	if err != nil {
 		return fmt.Errorf("building: %w", err)
+	}
+
+	if l.options.RemoveIntermediates {
+		var rmGroup multierror.Group
+		for image, engine := range images {
+			image := image
+			rmGroup.Go(func() error {
+				return engine.RemoveImage(ctx, RemoveImageOptions{ImageID: image.ImageID})
+			})
+		}
+		rmErrors := rmGroup.Wait()
+		if rmErrors != nil {
+			if err = rmErrors.ErrorOrNil(); err != nil {
+				return fmt.Errorf("removing intermediate images: %w", err)
+			}
+		}
 	}
 
 	// clear the list in case it already existed

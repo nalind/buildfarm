@@ -22,10 +22,11 @@ import (
 
 type listFiles struct {
 	directory string
+	options   ListBuilderOptions
 }
 
-func NewFileListBuilder(directory string) (ListBuilder, error) {
-	return &listFiles{directory: directory}, nil
+func NewFileListBuilder(directory string, options ListBuilderOptions) (ListBuilder, error) {
+	return &listFiles{directory: directory, options: options}, nil
 }
 
 func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuilder) error {
@@ -99,6 +100,22 @@ func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	err = pullErrors.ErrorOrNil()
 	if err != nil {
 		return fmt.Errorf("building: %w", err)
+	}
+
+	if m.options.RemoveIntermediates {
+		var rmGroup multierror.Group
+		for image, engine := range images {
+			image := image
+			rmGroup.Go(func() error {
+				return engine.RemoveImage(ctx, RemoveImageOptions{ImageID: image.ImageID})
+			})
+		}
+		rmErrors := rmGroup.Wait()
+		if rmErrors != nil {
+			if err = rmErrors.ErrorOrNil(); err != nil {
+				return fmt.Errorf("removing intermediate images: %w", err)
+			}
+		}
 	}
 
 	// add the images to the list
