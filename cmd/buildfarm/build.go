@@ -83,7 +83,7 @@ func init() {
 	buildCommand.PersistentFlags().StringVarP(&buildOpts.Output, "tag", "t", "", "output location")
 	buildCommand.PersistentFlags().StringSliceVarP(&buildOpts.Dockerfiles, "file", "f", nil, "dockerfile")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.BuildOptions.Labels, "label", nil, "set `label=value` in output images")
-	buildCommand.PersistentFlags().BoolVar(&buildOpts.BuildOptions.RemoveIntermediateCtrs, "rm", false, "remove intermediate images on success")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.BuildOptions.RemoveIntermediateCtrs, "rm", true, "remove intermediate images on success")
 	buildCommand.PersistentFlags().BoolVar(&buildOpts.BuildOptions.ForceRmIntermediateCtrs, "force-rm", false, "remove intermediate images, even if the build fails")
 
 }
