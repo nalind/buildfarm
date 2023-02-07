@@ -14,6 +14,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/storage"
 	"github.com/hashicorp/go-multierror"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 )
 
@@ -34,7 +35,7 @@ type Connection struct {
 	EmulatedPlatforms []string // valid if NativePlatform is set
 }
 
-// CreateFarm creates an empty farm which will use a set of system connections
+// CreateFarm creates an empty farm which will use a set of named connections
 // which will be added to it later.
 func CreateFarm(ctx context.Context, name string) (*Farm, error) {
 	return nil, errors.New("not implemented")
@@ -100,15 +101,21 @@ func GetFarm(ctx context.Context, name string, storeOptions *storage.StoreOption
 // individual status, along with an error if any are down or otherwise
 // unreachable.
 func (f *Farm) Status(ctx context.Context) (map[string]error, error) {
-	var statusError *multierror.Error
 	status := make(map[string]error)
+	var statusMutex sync.Mutex
+	var statusGroup multierror.Group
 	for _, conn := range f.Connections {
-		err := conn.Builder.Status(ctx)
-		status[conn.Name] = err
-		if err != nil {
-			statusError = multierror.Append(statusError, fmt.Errorf("%s: %w", conn.Name, err))
-		}
+		conn := conn
+		statusGroup.Go(func() error {
+			logrus.Debugf("getting status of %q", conn.Name)
+			err := conn.Builder.Status(ctx)
+			statusMutex.Lock()
+			defer statusMutex.Unlock()
+			status[conn.Name] = err
+			return err
+		})
 	}
+	statusError := statusGroup.Wait()
 	var err error
 	if statusError != nil {
 		err = statusError.ErrorOrNil()
@@ -189,8 +196,12 @@ func (f *Farm) EmulatedPlatforms(ctx context.Context) ([]string, error) {
 //
 // If platforms is an empty list, all available native platforms will be
 // scheduled.
+//
+// TODO: add (Priority,Weight *int) a la RFC 2782 to Connections and factor
+// them in when assigning builds.
 func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]string, error) {
 	var err error
+	// If we weren't given a list of target platforms, generate one.
 	if len(platforms) == 0 {
 		platforms, err = f.NativePlatforms(ctx)
 		if err != nil {
@@ -200,6 +211,8 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]str
 	scheduled := make(map[string]string)
 	native := make(map[string]string)
 	emulated := make(map[string]string)
+	// Make notes of which platforms we can build for natively, and which
+	// ones we can build for using emulation.
 	for i, conn := range f.Connections {
 		info, err := conn.Builder.Info(ctx, InfoOptions{})
 		if err != nil {
@@ -214,6 +227,9 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]str
 			}
 		}
 	}
+	// Assign a build to the first node that could build it natively, and
+	// if there isn't one, the first one that can build it with the help of
+	// emulation, and if there aren't any, error out.
 	for _, platform := range platforms {
 		if builder, ok := native[platform]; ok {
 			scheduled[platform] = builder
@@ -243,6 +259,7 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		connectionByName[f.Connections[i].Name] = &f.Connections[i]
 	}
 
+	// Build the list of jobs.
 	var connections sync.Map
 	type connection struct {
 		platform string
@@ -277,7 +294,7 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		})
 	}
 
-	// start builds in parallel and wait for them all to finish
+	// Start builds in parallel and wait for them all to finish.
 	var buildResults sync.Map
 	var buildGroup multierror.Group
 	type buildResult struct {
@@ -315,10 +332,11 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		return fmt.Errorf("building: %w", err)
 	}
 
-	// decide where the final result will be stored
+	// Decide where the final result will be stored.
 	var listBuilder ListBuilder
-	if strings.HasPrefix(reference, "dir:") {
-		listBuilder, err = NewFileListBuilder(reference[4:])
+	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
+		location := strings.TrimPrefix(reference, "dir:")
+		listBuilder, err = NewFileListBuilder(location)
 	} else {
 		listBuilder, err = NewPodmanLocalListBuilder(reference, f.FlagSet, f.storeOptions)
 	}
@@ -326,7 +344,7 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		return fmt.Errorf("preparing to build list: %w", err)
 	}
 
-	// build the final result
+	// Assemble the final result.
 	perArchBuilds := make(map[BuildReport]ImageBuilder)
 	buildResults.Range(func(k, v any) bool {
 		result, ok := v.(buildResult)
