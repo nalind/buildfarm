@@ -222,7 +222,7 @@ func (f *Farm) EmulatedPlatforms(ctx context.Context) ([]string, error) {
 // scheduled.
 //
 // TODO: add (Priority,Weight *int) a la RFC 2782 to Connections and factor
-// them in when assigning builds.
+// them in when assigning builds to nodes in here.
 func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]string, error) {
 	var err error
 	// If we weren't given a list of target platforms, generate one.
@@ -384,6 +384,7 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 				return fmt.Errorf("unexpected connection type for %q (shouldn't happen)", builder)
 			}
 			theseOptions := options
+			theseOptions.IIDFile = ""
 			theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{conn.os, conn.arch, conn.variant}}
 			theseOptions.Out = outWriter
 			theseOptions.Err = errWriter
@@ -409,6 +410,7 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 	listBuilderOptions := ListBuilderOptions{
 		ForceRemoveIntermediates: options.ForceRmIntermediateCtrs,
 		RemoveIntermediates:      options.RemoveIntermediateCtrs,
+		IIDFile:                  options.IIDFile,
 	}
 	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
 		location := strings.TrimPrefix(reference, "dir:")
@@ -431,5 +433,8 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		perArchBuilds[result.report] = result.builder
 		return true
 	})
-	return listBuilder.Build(ctx, perArchBuilds)
+	if err := listBuilder.Build(ctx, perArchBuilds); err != nil {
+		return err
+	}
+	return nil
 }

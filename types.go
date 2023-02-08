@@ -47,6 +47,7 @@ type RemoveImageOptions struct {
 type ListBuilderOptions struct {
 	ForceRemoveIntermediates bool
 	RemoveIntermediates      bool
+	IIDFile                  string
 }
 
 type ListBuilder interface {

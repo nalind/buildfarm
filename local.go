@@ -229,6 +229,9 @@ func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptio
 	if storeOptions == nil {
 		storeOptions = &storage.StoreOptions{}
 	}
+	if options.IIDFile != "" {
+		return nil, fmt.Errorf("local filesystem doesn't use image IDs, --iidfile not supported")
+	}
 	custom, err := config.ReadCustomConfig()
 	if err != nil {
 		return nil, fmt.Errorf("reading custom config: %w", err)

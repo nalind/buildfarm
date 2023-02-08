@@ -150,5 +150,13 @@ func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	if err != nil {
 		return fmt.Errorf("copying images to dir:%q: %w", m.directory, err)
 	}
+
+	// write the manifest list's ID file if we're expected to
+	if m.options.IIDFile != "" {
+		if err := os.WriteFile(m.options.IIDFile, []byte("sha256:"), 0644); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
