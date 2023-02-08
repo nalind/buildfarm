@@ -93,23 +93,6 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}
-	status, err := farm.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("status: %w", err)
-	}
-	logrus.Debugf("status: %v", status)
-
-	platforms, err := farm.NativePlatforms(ctx)
-	if err != nil {
-		return fmt.Errorf("platforms: %w", err)
-	}
-	logrus.Debugf("native platforms: %v", platforms)
-
-	platforms, err = farm.EmulatedPlatforms(ctx)
-	if err != nil {
-		return fmt.Errorf("platforms: %w", err)
-	}
-	logrus.Debugf("emulated platforms: %v", platforms)
 
 	schedule, err := farm.Schedule(ctx, nil)
 	if err != nil {
@@ -120,6 +103,7 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 	if err = farm.Build(ctx, buildOpts.Output, schedule, buildOpts.Dockerfiles, buildOpts.BuildOptions); err != nil {
 		return fmt.Errorf("build: %w", err)
 	}
+
 	logrus.Infof("build: ok")
 	return nil
 }

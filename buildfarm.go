@@ -146,13 +146,24 @@ func (f *Farm) ForEach(ctx context.Context, fn func(context.Context, string, Ima
 // NativePlatforms returns a list of the set of platforms for which the farm
 // can build images natively.
 func (f *Farm) NativePlatforms(ctx context.Context) ([]string, error) {
+	var infoGroup multierror.Group
 	for i, conn := range f.Connections {
-		info, err := conn.Builder.Info(ctx, InfoOptions{})
-		if err != nil {
+		i, conn := i, conn
+		infoGroup.Go(func() error {
+			info, err := conn.Builder.Info(ctx, InfoOptions{})
+			if err != nil {
+				return err
+			}
+			f.Connections[i].NativePlatform = info.NativePlatform
+			f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
+			return nil
+		})
+	}
+	merr := infoGroup.Wait()
+	if merr != nil {
+		if err := merr.ErrorOrNil(); err != nil {
 			return nil, err
 		}
-		f.Connections[i].NativePlatform = info.NativePlatform
-		f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
 	}
 	var platforms []string
 	nativeMap := make(map[string]struct{})
@@ -168,13 +179,24 @@ func (f *Farm) NativePlatforms(ctx context.Context) ([]string, error) {
 // EmulatedPlatforms returns a list of the set of platforms for which the farm
 // can build images with the help of emulation.
 func (f *Farm) EmulatedPlatforms(ctx context.Context) ([]string, error) {
+	var infoGroup multierror.Group
 	for i, conn := range f.Connections {
-		info, err := conn.Builder.Info(ctx, InfoOptions{})
-		if err != nil {
+		i, conn := i, conn
+		infoGroup.Go(func() error {
+			info, err := conn.Builder.Info(ctx, InfoOptions{})
+			if err != nil {
+				return err
+			}
+			f.Connections[i].NativePlatform = info.NativePlatform
+			f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
+			return nil
+		})
+	}
+	merr := infoGroup.Wait()
+	if merr != nil {
+		if err := merr.ErrorOrNil(); err != nil {
 			return nil, err
 		}
-		f.Connections[i].NativePlatform = info.NativePlatform
-		f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
 	}
 	var platforms []string
 	emulatedMap := make(map[string]struct{})
@@ -213,18 +235,32 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]str
 	emulated := make(map[string]string)
 	// Make notes of which platforms we can build for natively, and which
 	// ones we can build for using emulation.
+	var infoGroup multierror.Group
+	var infoMutex sync.Mutex
 	for i, conn := range f.Connections {
-		info, err := conn.Builder.Info(ctx, InfoOptions{})
-		if err != nil {
-			return nil, err
-		}
-		if _, assigned := native[info.NativePlatform]; !assigned {
-			native[info.NativePlatform] = conn.Name
-		}
-		for _, e := range f.Connections[i].EmulatedPlatforms {
-			if _, assigned := emulated[e]; !assigned {
-				emulated[e] = conn.Name
+		i, conn := i, conn
+		infoGroup.Go(func() error {
+			info, err := conn.Builder.Info(ctx, InfoOptions{})
+			if err != nil {
+				return err
 			}
+			infoMutex.Lock()
+			defer infoMutex.Unlock()
+			if _, assigned := native[info.NativePlatform]; !assigned {
+				native[info.NativePlatform] = conn.Name
+			}
+			for _, e := range f.Connections[i].EmulatedPlatforms {
+				if _, assigned := emulated[e]; !assigned {
+					emulated[e] = conn.Name
+				}
+			}
+			return nil
+		})
+	}
+	merr := infoGroup.Wait()
+	if merr != nil {
+		if err := merr.ErrorOrNil(); err != nil {
+			return nil, err
 		}
 	}
 	// Assign a build to the first node that could build it natively, and
