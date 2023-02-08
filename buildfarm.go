@@ -332,6 +332,24 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		})
 	}
 
+	// Decide where the final result will be stored.
+	var listBuilder ListBuilder
+	var err error
+	listBuilderOptions := ListBuilderOptions{
+		ForceRemoveIntermediates: options.ForceRmIntermediateCtrs,
+		RemoveIntermediates:      options.RemoveIntermediateCtrs,
+		IIDFile:                  options.IIDFile,
+	}
+	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
+		location := strings.TrimPrefix(reference, "dir:")
+		listBuilder, err = NewFileListBuilder(location, listBuilderOptions)
+	} else {
+		listBuilder, err = NewPodmanLocalListBuilder(reference, f.FlagSet, f.storeOptions, listBuilderOptions)
+	}
+	if err != nil {
+		return fmt.Errorf("preparing to build list: %w", err)
+	}
+
 	// Start builds in parallel and wait for them all to finish.
 	var buildResults sync.Map
 	var buildGroup multierror.Group
@@ -400,26 +418,8 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		})
 	}
 	buildErrors := buildGroup.Wait()
-	err := buildErrors.ErrorOrNil()
-	if err != nil {
+	if err := buildErrors.ErrorOrNil(); err != nil {
 		return fmt.Errorf("building: %w", err)
-	}
-
-	// Decide where the final result will be stored.
-	var listBuilder ListBuilder
-	listBuilderOptions := ListBuilderOptions{
-		ForceRemoveIntermediates: options.ForceRmIntermediateCtrs,
-		RemoveIntermediates:      options.RemoveIntermediateCtrs,
-		IIDFile:                  options.IIDFile,
-	}
-	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
-		location := strings.TrimPrefix(reference, "dir:")
-		listBuilder, err = NewFileListBuilder(location, listBuilderOptions)
-	} else {
-		listBuilder, err = NewPodmanLocalListBuilder(reference, f.FlagSet, f.storeOptions, listBuilderOptions)
-	}
-	if err != nil {
-		return fmt.Errorf("preparing to build list: %w", err)
 	}
 
 	// Assemble the final result.
