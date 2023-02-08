@@ -18,20 +18,19 @@ func init() {
 	}
 }
 
-func getDefaultStoreOptions() *storage.StoreOptions {
+func storeBefore() error {
+	if globalSettings.noLocal {
+		globalStorageOptions = nil
+		return nil
+	}
 	defaultStoreOptions, err := storage.DefaultStoreOptionsAutoDetectUID()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "selecting storage options: %v", err)
 		return nil
 	}
 	globalStorageOptions = &defaultStoreOptions
-	return &defaultStoreOptions
-}
-
-func storeBefore() error {
-	storeOptions := getDefaultStoreOptions()
-	if storeOptions != nil {
-		store, err := storage.GetStore(*storeOptions)
+	if globalStorageOptions != nil {
+		store, err := storage.GetStore(defaultStoreOptions)
 		if err != nil {
 			return err
 		}

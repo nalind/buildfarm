@@ -34,7 +34,8 @@ var (
 	}
 
 	globalSettings struct {
-		debug bool
+		debug   bool
+		noLocal bool
 	}
 )
 
@@ -64,6 +65,7 @@ func main() {
 	exitCode := 1
 
 	mainCmd.PersistentFlags().BoolVar(&globalSettings.debug, "debug", false, "print debugging information")
+	mainCmd.PersistentFlags().BoolVar(&globalSettings.noLocal, "no-local", false, "ignore local builder")
 
 	err := mainCmd.Execute()
 	if err != nil {

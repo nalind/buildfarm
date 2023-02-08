@@ -1,9 +1,11 @@
 package buildfarm
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -340,8 +342,40 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 	for platform, builder := range schedule {
 		platform := platform
 		builder := builder
+		outReader, outWriter := io.Pipe()
+		errReader, errWriter := io.Pipe()
+		go func() {
+			defer outReader.Close()
+			reader := bufio.NewReader(outReader)
+			writer := options.Out
+			if writer == nil {
+				writer = os.Stdout
+			}
+			line, err := reader.ReadString('\n')
+			for err == nil {
+				line = strings.TrimSuffix(line, "\n")
+				fmt.Fprintf(writer, "[%s@%s] %s\n", platform, builder, line)
+				line, err = reader.ReadString('\n')
+			}
+		}()
+		go func() {
+			defer errReader.Close()
+			reader := bufio.NewReader(errReader)
+			writer := options.Err
+			if writer == nil {
+				writer = os.Stderr
+			}
+			line, err := reader.ReadString('\n')
+			for err == nil {
+				line = strings.TrimSuffix(line, "\n")
+				fmt.Fprintf(writer, "[%s@%s] %s\n", platform, builder, line)
+				line, err = reader.ReadString('\n')
+			}
+		}()
 		buildGroup.Go(func() error {
 			var conn connection
+			defer outWriter.Close()
+			defer errWriter.Close()
 			c, ok := connections.Load(builder)
 			if !ok {
 				return fmt.Errorf("unknown connection for %q (shouldn't happen)", builder)
@@ -351,6 +385,8 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 			}
 			theseOptions := options
 			theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{conn.os, conn.arch, conn.variant}}
+			theseOptions.Out = outWriter
+			theseOptions.Err = errWriter
 			buildReport, err := conn.builder.Build(ctx, "", containerFiles, theseOptions)
 			if err != nil {
 				return fmt.Errorf("building for %q on %q: %w", conn.platform, builder, err)

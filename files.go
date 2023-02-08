@@ -53,6 +53,9 @@ func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	if err != nil {
 		return fmt.Errorf("parsing temporary image ref %q: %w", name, err)
 	}
+	if err := os.MkdirAll(m.directory, 0o755); err != nil {
+		return err
+	}
 	output, err := alltransports.ParseImageName("dir:" + m.directory)
 	if err != nil {
 		return fmt.Errorf("parsing output directory ref %q: %w", "dir:"+m.directory, err)
