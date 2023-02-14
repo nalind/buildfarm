@@ -31,8 +31,14 @@ func pruneCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing: %w", err)
 	}
 	globalFarm = farm
-	if err := farm.PruneImages(ctx, buildfarm.PruneImageOptions{}); err != nil {
+	pruneReport, err := farm.PruneImages(ctx, buildfarm.PruneImageOptions{})
+	if err != nil {
 		return fmt.Errorf("prune: %w", err)
+	}
+	for name, report := range pruneReport {
+		for _, imageID := range report.ImageIDs {
+			fmt.Printf("%s: %s\n", name, imageID)
+		}
 	}
 	return nil
 }

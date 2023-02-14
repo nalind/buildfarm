@@ -118,11 +118,18 @@ func NewFarm(ctx context.Context, name string, storeOptions *storage.StoreOption
 // images that we build after we've downloaded them when the Rm flag is true,
 // which is its default, but that still leaves base images that we caused to be
 // pulled lying around.
-func (f *Farm) PruneImages(ctx context.Context, options PruneImageOptions) error {
-	return f.ForEach(ctx, func(ctx context.Context, name string, ib ImageBuilder) (bool, error) {
-		err := ib.PruneImages(ctx, options)
+func (f *Farm) PruneImages(ctx context.Context, options PruneImageOptions) (map[string]PruneImageReport, error) {
+	report := make(map[string]PruneImageReport)
+	err := f.ForEach(ctx, func(ctx context.Context, name string, ib ImageBuilder) (bool, error) {
+		pruneReport, err := ib.PruneImages(ctx, options)
+		if err == nil {
+			report[name] = PruneImageReport{
+				ImageIDs: append([]string{}, pruneReport.ImageIDs...),
+			}
+		}
 		return false, err
 	})
+	return report, err
 }
 
 // Done performs any necessary end-of-process cleanup for the farm's

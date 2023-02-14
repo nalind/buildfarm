@@ -248,11 +248,18 @@ func (r *podmanLocal) RemoveImage(ctx context.Context, options RemoveImageOption
 	return nil
 }
 
-func (r *podmanLocal) PruneImages(ctx context.Context, options PruneImageOptions) error {
-	if _, err := r.engine.Prune(ctx, entities.ImagePruneOptions{All: true, Filter: []string{"dangling=false"}}); err != nil {
-		return fmt.Errorf("removing unused images from local storage: %w", err)
+func (r *podmanLocal) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
+	pruneReports, err := r.engine.Prune(ctx, entities.ImagePruneOptions{All: true, Filter: []string{"dangling=false"}})
+	if err != nil {
+		return PruneImageReport{}, fmt.Errorf("removing unused images from local storage: %w", err)
 	}
-	return nil
+	var report PruneImageReport
+	for _, pruneReport := range pruneReports {
+		if pruneReport.Err == nil && pruneReport.Id != "" {
+			report.ImageIDs = append(report.ImageIDs, pruneReport.Id)
+		}
+	}
+	return report, nil
 }
 
 func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptions *storage.StoreOptions, options ListBuilderOptions) (ListBuilder, error) {

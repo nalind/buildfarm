@@ -17,7 +17,7 @@ type ImageBuilder interface {
 	PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error)
 	PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error)
 	RemoveImage(ctx context.Context, options RemoveImageOptions) error
-	PruneImages(ctx context.Context, options PruneImageOptions) error
+	PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error)
 	Done(ctx context.Context) error
 }
 
@@ -51,6 +51,10 @@ type RemoveImageOptions struct {
 }
 
 type PruneImageOptions struct {
+}
+
+type PruneImageReport struct {
+	ImageIDs []string
 }
 
 type ListBuilderOptions struct {

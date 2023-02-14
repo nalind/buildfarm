@@ -287,12 +287,19 @@ func (r *dockerEngine) RemoveImage(ctx context.Context, options RemoveImageOptio
 	return nil
 }
 
-func (r *dockerEngine) PruneImages(ctx context.Context, options PruneImageOptions) error {
-	if _, err := r.client.PruneImages(docker.PruneImagesOptions{
+func (r *dockerEngine) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
+	pruneReports, err := r.client.PruneImages(docker.PruneImagesOptions{
 		Filters: map[string][]string{"force": {"true"}, "dangling": {"false"}},
 		Context: ctx,
-	}); err != nil {
-		return fmt.Errorf("removing unused images from remote %q: %w", r.name, err)
+	})
+	if err != nil {
+		return PruneImageReport{}, fmt.Errorf("removing unused images from remote %q: %w", r.name, err)
 	}
-	return nil
+	var report PruneImageReport
+	for _, deleted := range pruneReports.ImagesDeleted {
+		if deleted.Deleted != "" {
+			report.ImageIDs = append(report.ImageIDs, deleted.Deleted)
+		}
+	}
+	return report, nil
 }
