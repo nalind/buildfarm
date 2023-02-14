@@ -5,12 +5,15 @@ go 1.19
 require (
 	github.com/containers/buildah v1.29.0
 	github.com/containers/common v0.51.0
-	github.com/containers/image/v5 v5.24.0
-	github.com/containers/podman/v4 v4.4.0
+	github.com/containers/image/v5 v5.24.1
+	github.com/containers/podman/v4 v4.4.1
 	github.com/containers/storage v1.45.3
+	github.com/docker/go-units v0.5.0
+	github.com/fsouza/go-dockerclient v1.9.3
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/opencontainers/image-spec v1.1.0-rc2
 	github.com/sirupsen/logrus v1.9.0
+	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.8.1
 )
@@ -48,9 +51,7 @@ require (
 	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/docker/go-connections v0.4.1-0.20210727194412-58542c764a11 // indirect
 	github.com/docker/go-plugins-helpers v0.0.0-20211224144127-6eecb7beb651 // indirect
-	github.com/docker/go-units v0.5.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
-	github.com/fsouza/go-dockerclient v1.9.3 // indirect
 	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/go-openapi/analysis v0.21.4 // indirect
 	github.com/go-openapi/errors v0.20.3 // indirect
@@ -114,7 +115,6 @@ require (
 	github.com/sigstore/fulcio v1.0.0 // indirect
 	github.com/sigstore/rekor v1.0.1 // indirect
 	github.com/sigstore/sigstore v1.5.1 // indirect
-	github.com/spf13/cobra v1.6.1 // indirect
 	github.com/stefanberger/go-pkcs11uri v0.0.0-20201008174630-78d3cae3a980 // indirect
 	github.com/sylabs/sif/v2 v2.9.0 // indirect
 	github.com/syndtr/gocapability v0.0.0-20200815063812-42c35b437635 // indirect
