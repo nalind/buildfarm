@@ -219,7 +219,10 @@ func (r *podmanRemote) RemoveImage(ctx context.Context, options RemoveImageOptio
 }
 
 func (r *podmanRemote) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
-	pruneReports, err := r.engine.Prune(ctx, entities.ImagePruneOptions{All: true, Filter: []string{"dangling=false"}})
+	pruneReports, err := r.engine.Prune(ctx, entities.ImagePruneOptions{
+		All:    options.All,
+		Filter: []string{fmt.Sprintf("dangling=%v", !options.All)},
+	})
 	if err != nil {
 		return PruneImageReport{}, fmt.Errorf("removing unused images from local storage: %w", err)
 	}

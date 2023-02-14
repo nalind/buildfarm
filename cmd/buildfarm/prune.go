@@ -9,15 +9,16 @@ import (
 )
 
 var (
-	pruneDescription = `Prunes unused images from a build farm.`
+	pruneDescription = `Prunes untagged and optionall unused images from a build farm.`
 	pruneCommand     = &cobra.Command{
 		Use:     "prune",
-		Short:   "Prunes unused images on the nodes in a build farm",
+		Short:   "Prunes untagged and optionall unused images on the nodes in a build farm",
 		Long:    pruneDescription,
 		RunE:    pruneCmd,
 		Example: "  prune [flags] [farm]",
 		Args:    cobra.MaximumNArgs(1),
 	}
+	pruneOptions buildfarm.PruneImageOptions
 )
 
 func pruneCmd(cmd *cobra.Command, args []string) error {
@@ -31,11 +32,14 @@ func pruneCmd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("initializing: %w", err)
 	}
 	globalFarm = farm
-	pruneReport, err := farm.PruneImages(ctx, buildfarm.PruneImageOptions{})
+	pruneReport, err := farm.PruneImages(ctx, pruneOptions)
 	if err != nil {
 		return fmt.Errorf("prune: %w", err)
 	}
 	for name, report := range pruneReport {
+		for _, tag := range report.ImageNames {
+			fmt.Printf("%s: %s\n", name, tag)
+		}
 		for _, imageID := range report.ImageIDs {
 			fmt.Printf("%s: %s\n", name, imageID)
 		}
@@ -45,4 +49,5 @@ func pruneCmd(cmd *cobra.Command, args []string) error {
 
 func init() {
 	mainCmd.AddCommand(pruneCommand)
+	pruneCommand.PersistentFlags().BoolVar(&pruneOptions.All, "all", false, "remove unused images")
 }

@@ -289,7 +289,11 @@ func (r *dockerEngine) RemoveImage(ctx context.Context, options RemoveImageOptio
 
 func (r *dockerEngine) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
 	pruneReports, err := r.client.PruneImages(docker.PruneImagesOptions{
-		Filters: map[string][]string{"force": {"true"}, "dangling": {"false"}},
+		Filters: map[string][]string{
+			"force":    {"true"},
+			"all":      {fmt.Sprintf("%v", options.All)},
+			"dangling": {fmt.Sprintf("%v", !options.All)},
+		},
 		Context: ctx,
 	})
 	if err != nil {

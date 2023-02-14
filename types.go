@@ -51,10 +51,12 @@ type RemoveImageOptions struct {
 }
 
 type PruneImageOptions struct {
+	All bool
 }
 
 type PruneImageReport struct {
-	ImageIDs []string
+	ImageIDs   []string
+	ImageNames []string
 }
 
 type ListBuilderOptions struct {
