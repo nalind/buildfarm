@@ -26,10 +26,14 @@ type listFiles struct {
 	options   ListBuilderOptions
 }
 
+// NewFileListBuilder returns a manifest list builder which saves a manifest
+// list and images to a specified directory in the non-standard dir: format.
 func NewFileListBuilder(directory string, options ListBuilderOptions) (ListBuilder, error) {
 	return &listFiles{directory: directory, options: options}, nil
 }
 
+// Build retrieves images from the build reports and assembles them into a
+// manifest list in the configured directory.
 func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuilder) (string, error) {
 	listFormat := v1.MediaTypeImageIndex
 	imageFormat := v1.MediaTypeImageManifest

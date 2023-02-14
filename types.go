@@ -6,12 +6,13 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
+// ImageBuilder is a subset of the entities.ImageEngine interface.
 type ImageBuilder interface {
 	Driver(ctx context.Context) string
 	Name(ctx context.Context) string
 	Status(ctx context.Context) error
 	Info(ctx context.Context, options InfoOptions) (*Info, error)
-	NativePlatform(ctx context.Context, options InfoOptions) (string, error)
+	NativePlatforms(ctx context.Context, options InfoOptions) ([]string, error)
 	EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error)
 	Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error)
 	PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error)
@@ -25,7 +26,7 @@ type InfoOptions struct {
 }
 
 type Info struct {
-	NativePlatform    string
+	NativePlatforms   []string
 	EmulatedPlatforms []string
 }
 

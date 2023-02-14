@@ -33,10 +33,12 @@ type podmanRemote struct {
 	os                string
 	arch              string
 	variant           string
-	nativePlatform    string
+	nativePlatforms   []string
 	emulatedPlatforms []string
 }
 
+// NewPodmanRemoteImageBuilder creates an ImageBuilder which uses a remote
+// connection to a podman service running somewhere else.
 func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name string) (ImageBuilder, error) {
 	if flags == nil {
 		flags = pflag.NewFlagSet("buildfarm", pflag.ExitOnError)
@@ -84,14 +86,17 @@ func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name
 	return &remote, nil
 }
 
+// Name returns the remote engine's name.
 func (r *podmanRemote) Name(ctx context.Context) string {
 	return r.name
 }
 
+// Driver returns a description of implementation of this ImageBuilder.
 func (r *podmanRemote) Driver(ctx context.Context) string {
 	return "podman-remote"
 }
 
+// Done shuts down our connection to the remote engine.
 func (r *podmanRemote) Done(ctx context.Context) error {
 	if r.connCtx != nil && r.engine != nil {
 		r.engine.Shutdown(r.connCtx)
@@ -101,45 +106,54 @@ func (r *podmanRemote) Done(ctx context.Context) error {
 	return nil
 }
 
-func (r *podmanRemote) fetchInfo(ctx context.Context, options InfoOptions) (os, arch, nativePlatform string, err error) {
+func (r *podmanRemote) fetchInfo(ctx context.Context, options InfoOptions) (os, arch string, nativePlatforms []string, err error) {
 	engineInfo, err := system.Info(r.connCtx, &system.InfoOptions{})
 	if err != nil {
-		return "", "", "", fmt.Errorf("retrieving host info from %q: %w", r.name, err)
+		return "", "", nil, fmt.Errorf("retrieving host info from %q: %w", r.name, err)
 	}
 	os = engineInfo.Host.OS
 	arch = engineInfo.Host.Arch
-	nativePlatform = os + "/" + arch // TODO: pester someone about returning variant info
-	return os, arch, nativePlatform, nil
+	nativePlatform := os + "/" + arch // TODO: pester someone about returning variant info
+	return os, arch, []string{nativePlatform}, nil
 }
 
+// Info returns information about the remote engine.
 func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
-	return &Info{NativePlatform: r.nativePlatform}, r.platformsErr
+	return &Info{NativePlatforms: append([]string{}, r.nativePlatforms...)}, r.platformsErr
 }
 
-func (r *podmanRemote) NativePlatform(ctx context.Context, options InfoOptions) (string, error) {
+// NativePlatform returns the platforms that the remote engine can build for
+// without requiring user space emulation.
+func (r *podmanRemote) NativePlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
-	return r.nativePlatform, r.platformsErr
+	return append([]string{}, r.nativePlatforms...), r.platformsErr
 }
 
+// EmulatedPlatforms returns the platforms that the remote engine can build for
+// with the help of user space emulation.
 func (r *podmanRemote) EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
 	return nil, r.platformsErr
 }
 
+// Status returns the status of the connection to the remote engine.
 func (r *podmanRemote) Status(ctx context.Context) error {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, InfoOptions{})
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, InfoOptions{})
 	})
-	return r.platformsErr
+	_, err := r.engine.Config(ctx)
+	return err
 }
 
+// Build attempts a build using the specified build options.  If the build
+// succeeds, it returns the built image's ID.
 func (r *podmanRemote) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var buildReport BuildReport
 	theseOptions := options
@@ -156,6 +170,8 @@ func (r *podmanRemote) Build(ctx context.Context, reference string, containerFil
 	return buildReport, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to a file,
+// returning a string-format reference which can be parsed by containers/image.
 func (r *podmanRemote) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
 	saveOptions := entities.ImageSaveOptions{
 		Format: options.SaveFormat,
@@ -167,6 +183,9 @@ func (r *podmanRemote) PullToFile(ctx context.Context, options PullToFileOptions
 	return options.SaveFormat + ":" + options.SaveFile, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to the local
+// engine passed in via options, returning a string-format reference which can
+// be parsed by containers/image.
 func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error) {
 	tempFile, err := ioutil.TempFile("", "")
 	if err != nil {
@@ -195,6 +214,7 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	return name, err
 }
 
+// RemoveImage removes an image from the remote engine.
 func (r *podmanRemote) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
 	rmOptions := entities.ImageRemoveOptions{}
 	report, errs := r.engine.Remove(ctx, []string{options.ImageID}, rmOptions)
@@ -218,6 +238,7 @@ func (r *podmanRemote) RemoveImage(ctx context.Context, options RemoveImageOptio
 	return nil
 }
 
+// PruneImages removes unused images from the remote engine.
 func (r *podmanRemote) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
 	pruneReports, err := r.engine.Prune(ctx, entities.ImagePruneOptions{
 		All:    options.All,

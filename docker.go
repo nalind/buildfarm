@@ -31,10 +31,11 @@ type dockerEngine struct {
 	os                string
 	arch              string
 	variant           string
-	nativePlatform    string
+	nativePlatforms   []string
 	emulatedPlatforms []string
 }
 
+// NewDockerImageBuilder creates an ImageBuilder which uses a docker engine.
 func NewDockerImageBuilder(ctx context.Context, flags *pflag.FlagSet, name string) (ImageBuilder, error) {
 	if flags == nil {
 		flags = pflag.NewFlagSet("buildfarm", pflag.ExitOnError)
@@ -62,54 +63,66 @@ func NewDockerImageBuilder(ctx context.Context, flags *pflag.FlagSet, name strin
 	return &remote, nil
 }
 
+// Name returns the remote engine's name.
 func (r *dockerEngine) Name(ctx context.Context) string {
 	return r.name
 }
 
+// Driver returns a description of implementation of this ImageBuilder.
 func (r *dockerEngine) Driver(ctx context.Context) string {
 	return "docker"
 }
 
+// Done would shut down our connection to the engine, if we kept one.
 func (r *dockerEngine) Done(ctx context.Context) error {
 	return nil
 }
 
-func (r *dockerEngine) fetchInfo(ctx context.Context, options InfoOptions) (os, arch, nativePlatform string, err error) {
+// fetchInfo reads back information about the remote engine.
+func (r *dockerEngine) fetchInfo(ctx context.Context, options InfoOptions) (os, arch string, nativePlatforms []string, err error) {
 	dockerInfo, infoErr := r.client.Info()
 	if infoErr != nil {
-		return "", "", "", fmt.Errorf("retrieving host info from %q: %w", r.name, infoErr)
+		return "", "", nil, fmt.Errorf("retrieving host info from %q: %w", r.name, infoErr)
 	}
 	os = dockerInfo.OperatingSystem
 	arch = dockerInfo.Architecture
-	nativePlatform = os + "/" + arch // TODO: pester someone about returning variant info
-	return os, arch, nativePlatform, nil
+	nativePlatform := os + "/" + arch // TODO: pester someone about returning variant info
+	return os, arch, []string{nativePlatform}, nil
 }
 
+// Info returns information about the remote engine.
 func (r *dockerEngine) Info(ctx context.Context, options InfoOptions) (*Info, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
-	return &Info{NativePlatform: r.nativePlatform}, r.platformsErr
+	return &Info{NativePlatforms: append([]string{}, r.nativePlatforms...)}, r.platformsErr
 }
 
-func (r *dockerEngine) NativePlatform(ctx context.Context, options InfoOptions) (string, error) {
+// NativePlatform returns the platforms that the remote engine can build for
+// without requiring user space emulation.
+func (r *dockerEngine) NativePlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
-	return r.nativePlatform, r.platformsErr
+	return append([]string{}, r.nativePlatforms...), r.platformsErr
 }
 
+// EmulatedPlatforms returns the platforms that the remote engine can build for
+// with the help of user space emulation.
 func (r *dockerEngine) EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	r.platforms.Do(func() {
-		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+		r.os, r.arch, r.nativePlatforms, r.platformsErr = r.fetchInfo(ctx, options)
 	})
 	return nil, r.platformsErr
 }
 
+// Status returns the status of the connection to the remote engine.
 func (r *dockerEngine) Status(ctx context.Context) error {
 	return r.client.PingWithContext(ctx)
 }
 
+// Build attempts a build using the specified build options.  If the build
+// succeeds, it returns the built image's ID.
 func (r *dockerEngine) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
@@ -117,11 +130,6 @@ func (r *dockerEngine) Build(ctx context.Context, reference string, containerFil
 	if len(containerFiles) > 0 {
 		dockerfile = containerFiles[0]
 	}
-	rc, err := chrootarchive.Tar(options.ContextDirectory, nil, options.ContextDirectory)
-	if err != nil {
-		return buildReport, fmt.Errorf("archiving %q: %w", options.ContextDirectory, err)
-	}
-	defer rc.Close()
 	labelsMap := make(map[string]string)
 	for _, label := range options.Labels {
 		v := strings.SplitN(label, "=", 2)
@@ -186,6 +194,11 @@ func (r *dockerEngine) Build(ctx context.Context, reference string, containerFil
 		}
 		ulimits = append(ulimits, docker.ULimit{Name: u[0], Soft: soft, Hard: hard})
 	}
+	rc, err := chrootarchive.Tar(options.ContextDirectory, nil, options.ContextDirectory)
+	if err != nil {
+		return buildReport, fmt.Errorf("archiving %q: %w", options.ContextDirectory, err)
+	}
+	defer rc.Close()
 	buildOptions := docker.BuildImageOptions{
 		Name:                reference,
 		InputStream:         rc,
@@ -228,6 +241,8 @@ func (r *dockerEngine) Build(ctx context.Context, reference string, containerFil
 	return buildReport, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to a file,
+// returning a string-format reference which can be parsed by containers/image.
 func (r *dockerEngine) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
 	tempFile, err := os.Create(options.SaveFile)
 	if err != nil {
@@ -252,6 +267,9 @@ func (r *dockerEngine) PullToFile(ctx context.Context, options PullToFileOptions
 	return options.SaveFormat + ":" + options.SaveFile, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to the local
+// engine passed in via options, returning a string-format reference which can
+// be parsed by containers/image.
 func (r *dockerEngine) PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error) {
 	if options.Destination == nil {
 		return "", errors.New("internal error: options.Destination not set")
@@ -280,6 +298,7 @@ func (r *dockerEngine) PullToLocal(ctx context.Context, options PullToLocalOptio
 	return name, err
 }
 
+// RemoveImage removes an image from the remote engine.
 func (r *dockerEngine) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
 	if err := r.client.RemoveImage(options.ImageID); err != nil {
 		return fmt.Errorf("removing intermediate image %q from remote %q: %w", options.ImageID, r.name, err)
@@ -287,6 +306,7 @@ func (r *dockerEngine) RemoveImage(ctx context.Context, options RemoveImageOptio
 	return nil
 }
 
+// PruneImages removes unused images from the remote engine.
 func (r *dockerEngine) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
 	pruneReports, err := r.client.PruneImages(docker.PruneImagesOptions{
 		Filters: map[string][]string{

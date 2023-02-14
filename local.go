@@ -33,7 +33,7 @@ type podmanLocal struct {
 	os                string
 	arch              string
 	variant           string
-	nativePlatform    string
+	nativePlatforms   []string
 	emulatedPlatforms []string
 }
 
@@ -45,6 +45,7 @@ type listLocal struct {
 	options      ListBuilderOptions
 }
 
+// NewPodmanLocalImageBuilder creates an ImageBuilder which uses libpod to directly perform a build.
 func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, storeOptions *storage.StoreOptions) (ImageBuilder, error) {
 	if flags == nil {
 		flags = pflag.NewFlagSet("buildfarm", pflag.ExitOnError)
@@ -84,25 +85,29 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 	return &local, nil
 }
 
+// Name returns the local engine's name.
 func (l *podmanLocal) Name(ctx context.Context) string {
 	return l.name
 }
 
+// Driver returns a description of implementation of this ImageBuilder.
 func (l *podmanLocal) Driver(ctx context.Context) string {
 	return "local"
 }
 
+// Done would shut down our connection to the engine, but it can't be started
+// back up, so it doesn't.
 func (l *podmanLocal) Done(ctx context.Context) error {
 	// return l.engine.Shutdown(ctx) - we actually get the same runtime every time, and we get errors if we try to use it after shutting it down. TODO: complain about it, loudly.
 	return nil
 }
 
-func (l *podmanLocal) fetchInfo(ctx context.Context, options InfoOptions) (os, arch, variant, nativePlatform string, emulatedPlatforms []string, err error) {
-	nativePlatform = parse.DefaultPlatform()
+func (l *podmanLocal) fetchInfo(ctx context.Context, options InfoOptions) (os, arch, variant string, nativePlatforms []string, emulatedPlatforms []string, err error) {
+	nativePlatform := parse.DefaultPlatform()
 	platform := strings.SplitN(nativePlatform, "/", 3)
 	switch len(platform) {
 	case 0, 1:
-		return "", "", "", "", nil, fmt.Errorf("unparseable default platform %q", nativePlatform)
+		return "", "", "", nil, nil, fmt.Errorf("unparseable default platform %q", nativePlatform)
 	case 2:
 		os, arch = platform[0], platform[1]
 	case 3:
@@ -114,41 +119,50 @@ func (l *podmanLocal) fetchInfo(ctx context.Context, options InfoOptions) (os, a
 		nativePlatform += ("/" + variant)
 	}
 	emulatedPlatforms = emulation.Registered()
-	return os, arch, variant, nativePlatform, emulatedPlatforms, nil
+	return os, arch, variant, append([]string{}, nativePlatform), emulatedPlatforms, nil
 }
 
+// Info returns information about the local engine.
 func (l *podmanLocal) Info(ctx context.Context, options InfoOptions) (*Info, error) {
 	l.platforms.Do(func() {
-		l.os, l.arch, l.variant, l.nativePlatform, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
+		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
 	})
-	return &Info{NativePlatform: l.nativePlatform, EmulatedPlatforms: l.emulatedPlatforms}, l.platformsErr
+	return &Info{NativePlatforms: append([]string{}, l.nativePlatforms...), EmulatedPlatforms: l.emulatedPlatforms}, l.platformsErr
 }
 
-func (l *podmanLocal) NativePlatform(ctx context.Context, options InfoOptions) (string, error) {
+// NativePlatform returns the platforms that the local engine can build for
+// without requiring user space emulation.
+func (l *podmanLocal) NativePlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	l.platforms.Do(func() {
-		l.os, l.arch, l.variant, l.nativePlatform, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
+		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
 	})
-	return l.nativePlatform, l.platformsErr
+	return append([]string{}, l.nativePlatforms...), l.platformsErr
 }
 
+// EmulatedPlatforms returns the platforms that the local engine can build for
+// with the help of user space emulation.
 func (l *podmanLocal) EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
 	l.platforms.Do(func() {
-		l.os, l.arch, l.variant, l.nativePlatform, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
+		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, options)
 	})
 	return l.emulatedPlatforms, l.platformsErr
 }
 
+// Status returns the status of the connection to the local engine.
 func (l *podmanLocal) Status(ctx context.Context) error {
 	l.platforms.Do(func() {
-		l.os, l.arch, l.variant, l.nativePlatform, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, InfoOptions{})
+		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, InfoOptions{})
 	})
-	return l.platformsErr
+	_, err := l.engine.Config(ctx)
+	return err
 }
 
+// Build attempts a build using the specified build options.  If the build
+// succeeds, it returns the built image's ID.
 func (l *podmanLocal) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
 	var buildReport BuildReport
 	l.platforms.Do(func() {
-		l.os, l.arch, l.variant, l.nativePlatform, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, InfoOptions{})
+		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, InfoOptions{})
 	})
 	if l.platformsErr != nil {
 		return buildReport, fmt.Errorf("determining local platform: %w", l.platformsErr)
@@ -167,6 +181,8 @@ func (l *podmanLocal) Build(ctx context.Context, reference string, containerFile
 	return buildReport, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to a file,
+// returning a string-format reference which can be parsed by containers/image.
 func (r *podmanLocal) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
 	saveOptions := entities.ImageSaveOptions{
 		Format: options.SaveFormat,
@@ -178,6 +194,9 @@ func (r *podmanLocal) PullToFile(ctx context.Context, options PullToFileOptions)
 	return options.SaveFormat + ":" + options.SaveFile, nil
 }
 
+// PullToFile pulls the image from the remote engine and saves it to the local
+// engine passed in via options, returning a string-format reference which can
+// be parsed by containers/image.
 func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error) {
 	destination := options.Destination
 
@@ -225,6 +244,7 @@ func (r *podmanLocal) PullToLocal(ctx context.Context, options PullToLocalOption
 	return istorage.Transport.Name() + ":" + options.ImageID, nil
 }
 
+// RemoveImage removes an image from the local engine.
 func (r *podmanLocal) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
 	rmOptions := entities.ImageRemoveOptions{}
 	report, errs := r.engine.Remove(ctx, []string{options.ImageID}, rmOptions)
@@ -248,6 +268,7 @@ func (r *podmanLocal) RemoveImage(ctx context.Context, options RemoveImageOption
 	return nil
 }
 
+// PruneImages removes unused images from the local engine.
 func (r *podmanLocal) PruneImages(ctx context.Context, options PruneImageOptions) (PruneImageReport, error) {
 	pruneReports, err := r.engine.Prune(ctx, entities.ImagePruneOptions{
 		All:    options.All,
@@ -265,6 +286,8 @@ func (r *podmanLocal) PruneImages(ctx context.Context, options PruneImageOptions
 	return report, nil
 }
 
+// NewPodmanLocalListBuilder returns a manifest list builder which saves a
+// manifest list and images to local storage.
 func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptions *storage.StoreOptions, options ListBuilderOptions) (ListBuilder, error) {
 	if storeOptions == nil {
 		storeOptions = &storage.StoreOptions{}
@@ -291,6 +314,8 @@ func NewPodmanLocalListBuilder(listName string, flags *pflag.FlagSet, storeOptio
 	return ll, nil
 }
 
+// Build retrieves images from the build reports and assembles them into a
+// manifest list in local container storage.
 func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuilder) (string, error) {
 	podmanConfig := entities.PodmanConfig{
 		FlagSet:                  l.flagSet,
