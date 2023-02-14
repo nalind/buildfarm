@@ -38,8 +38,10 @@ var (
 	}
 
 	globalSettings struct {
-		debug bool
-		local bool
+		debug          bool
+		local          bool
+		farmName       string
+		adHocFarmNodes []string
 	}
 )
 
@@ -65,6 +67,18 @@ func after(cmd *cobra.Command) error {
 	return nil
 }
 
+func getFarm(ctx context.Context) (farm *buildfarm.Farm, err error) {
+	if len(globalSettings.adHocFarmNodes) > 0 {
+		farm, err = buildfarm.NewAdHocFarm(ctx, globalSettings.adHocFarmNodes, globalStorageOptions, nil)
+	} else {
+		farm, err = buildfarm.NewFarm(ctx, globalSettings.farmName, globalStorageOptions, nil)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("initializing: %w", err)
+	}
+	return farm, err
+}
+
 func main() {
 	if reexec.Init() {
 		return
@@ -73,6 +87,8 @@ func main() {
 
 	exitCode := 1
 
+	mainCmd.PersistentFlags().StringVar(&globalSettings.farmName, "farm", "", "name of farm to use")
+	mainCmd.PersistentFlags().StringSliceVar(&globalSettings.adHocFarmNodes, "node", nil, "name of node to use in an ad-hoc farm")
 	mainCmd.PersistentFlags().BoolVar(&globalSettings.debug, "debug", false, "print debugging information")
 	mainCmd.PersistentFlags().BoolVar(&globalSettings.local, "local", false, "include local builder")
 

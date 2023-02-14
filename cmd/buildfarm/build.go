@@ -10,7 +10,6 @@ import (
 	"github.com/containers/buildah/pkg/util"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/nalind/buildfarm"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -116,7 +115,7 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 		buildOpts.Dockerfiles = append(buildOpts.Dockerfiles, absDockerfile)
 	}
 
-	farm, err := buildfarm.NewFarm(ctx, "", globalStorageOptions, nil)
+	farm, err := getFarm(ctx)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}

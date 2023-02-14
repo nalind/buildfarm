@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nalind/buildfarm"
 	"github.com/spf13/cobra"
 )
 
@@ -23,11 +22,10 @@ var (
 
 func statusCmd(cmd *cobra.Command, args []string) error {
 	ctx := context.TODO()
-	farmName := ""
 	if len(args) > 0 {
-		farmName = args[0]
+		globalSettings.farmName = args[0]
 	}
-	farm, err := buildfarm.NewFarm(ctx, farmName, globalStorageOptions, nil)
+	farm, err := getFarm(ctx)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}

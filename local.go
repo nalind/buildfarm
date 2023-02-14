@@ -22,8 +22,12 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	LocalImageBuilderName   = "(local)"
+	localImageBuilderDriver = "local"
+)
+
 type podmanLocal struct {
-	name              string
 	flagSet           *pflag.FlagSet
 	config            *config.Config
 	storeOptions      storage.StoreOptions
@@ -71,7 +75,6 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 		return nil, fmt.Errorf("initializing local image engine: %w", err)
 	}
 	local := podmanLocal{
-		name:    "local",
 		flagSet: flags,
 		config:  custom,
 		storeOptions: storage.StoreOptions{
@@ -87,12 +90,12 @@ func NewPodmanLocalImageBuilder(ctx context.Context, flags *pflag.FlagSet, store
 
 // Name returns the local engine's name.
 func (l *podmanLocal) Name(ctx context.Context) string {
-	return l.name
+	return LocalImageBuilderName
 }
 
 // Driver returns a description of implementation of this ImageBuilder.
 func (l *podmanLocal) Driver(ctx context.Context) string {
-	return "local"
+	return localImageBuilderDriver
 }
 
 // Done would shut down our connection to the engine, but it can't be started
