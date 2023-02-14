@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,12 +11,15 @@ import (
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/unshare"
+	"github.com/nalind/buildfarm"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
 var (
 	globalStorageOptions *storage.StoreOptions
+
+	globalFarm *buildfarm.Farm
 
 	mainCmd = &cobra.Command{
 		Use:  "buildfarm",
@@ -34,8 +38,8 @@ var (
 	}
 
 	globalSettings struct {
-		debug   bool
-		noLocal bool
+		debug bool
+		local bool
 	}
 )
 
@@ -50,6 +54,11 @@ func before(cmd *cobra.Command) error {
 }
 
 func after(cmd *cobra.Command) error {
+	if globalFarm != nil {
+		if err := globalFarm.Done(context.TODO()); err != nil {
+			return err
+		}
+	}
 	if err := storeAfter(); err != nil {
 		return err
 	}
@@ -65,7 +74,7 @@ func main() {
 	exitCode := 1
 
 	mainCmd.PersistentFlags().BoolVar(&globalSettings.debug, "debug", false, "print debugging information")
-	mainCmd.PersistentFlags().BoolVar(&globalSettings.noLocal, "no-local", false, "ignore local builder")
+	mainCmd.PersistentFlags().BoolVar(&globalSettings.local, "local", false, "include local builder")
 
 	err := mainCmd.Execute()
 	if err != nil {

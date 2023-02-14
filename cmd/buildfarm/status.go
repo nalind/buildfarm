@@ -27,10 +27,11 @@ func statusCmd(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		farmName = args[0]
 	}
-	farm, err := buildfarm.GetFarm(ctx, farmName, globalStorageOptions, nil)
+	farm, err := buildfarm.NewFarm(ctx, farmName, globalStorageOptions, nil)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}
+	globalFarm = farm
 	status, err := farm.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("status: %w", err)

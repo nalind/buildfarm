@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"sync"
 
 	"github.com/containers/buildah"
 	"github.com/containers/common/pkg/config"
@@ -19,15 +20,21 @@ import (
 )
 
 type podmanRemote struct {
-	name      string
-	flagSet   *pflag.FlagSet
-	config    *config.Config
-	uri       string
-	identity  string
-	isMachine bool
-	os        string
-	arch      string
-	variant   string
+	name              string
+	flagSet           *pflag.FlagSet
+	config            *config.Config
+	uri               string
+	identity          string
+	isMachine         bool
+	connCtx           context.Context
+	engine            entities.ImageEngine
+	platforms         sync.Once
+	platformsErr      error
+	os                string
+	arch              string
+	variant           string
+	nativePlatform    string
+	emulatedPlatforms []string
 }
 
 func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name string) (ImageBuilder, error) {
@@ -42,6 +49,28 @@ func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name
 	if !ok {
 		err = fmt.Errorf("attempted to use destination %q, but no such destination exists", name)
 	}
+	var connCtx context.Context
+	if dest.Identity != "" {
+		connCtx, err = bindings.NewConnectionWithIdentity(ctx, dest.URI, dest.Identity, dest.IsMachine)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to %q at %q as %q: %w", name, dest.URI, dest.Identity, err)
+		}
+	} else {
+		connCtx, err = bindings.NewConnection(ctx, dest.URI)
+		if err != nil {
+			return nil, fmt.Errorf("connecting to %q at %q: %w", name, dest.URI, err)
+		}
+	}
+	remoteConfig := entities.PodmanConfig{
+		FlagSet:    flags,
+		EngineMode: entities.TunnelMode,
+		URI:        dest.URI,
+		Identity:   dest.Identity,
+	}
+	engine, err := infra.NewImageEngine(&remoteConfig)
+	if err != nil {
+		return nil, fmt.Errorf("initializing image engine at %q: %w", dest.URI, err)
+	}
 	remote := podmanRemote{
 		name:      name,
 		flagSet:   flags,
@@ -49,74 +78,75 @@ func NewPodmanRemoteImageBuilder(ctx context.Context, flags *pflag.FlagSet, name
 		uri:       dest.URI,
 		identity:  dest.Identity,
 		isMachine: dest.IsMachine,
+		connCtx:   connCtx,
+		engine:    engine,
 	}
 	return &remote, nil
 }
 
-func (r *podmanRemote) withEngine(ctx context.Context, fn func(ctx context.Context, engine entities.ImageEngine) error) error {
-	var connctx context.Context
-	var err error
-	if r.identity != "" {
-		connctx, err = bindings.NewConnectionWithIdentity(ctx, r.uri, r.identity, r.isMachine)
-		if err != nil {
-			return fmt.Errorf("connecting to %q at %q as %q: %w", r.name, r.uri, r.identity, err)
-		}
-	} else {
-		connctx, err = bindings.NewConnection(ctx, r.uri)
-		if err != nil {
-			return fmt.Errorf("connecting to %q at %q: %w", r.name, r.uri, err)
-		}
+func (r *podmanRemote) Name(ctx context.Context) string {
+	return r.name
+}
+
+func (r *podmanRemote) Driver(ctx context.Context) string {
+	return "podman-remote"
+}
+
+func (r *podmanRemote) Done(ctx context.Context) error {
+	if r.connCtx != nil && r.engine != nil {
+		r.engine.Shutdown(r.connCtx)
+		r.connCtx = nil
+		r.engine = nil
 	}
-	remoteConfig := entities.PodmanConfig{
-		FlagSet:    r.flagSet,
-		EngineMode: entities.TunnelMode,
-		URI:        r.uri,
-		Identity:   r.identity,
-	}
-	engine, err := infra.NewImageEngine(&remoteConfig)
+	return nil
+}
+
+func (r *podmanRemote) fetchInfo(ctx context.Context, options InfoOptions) (os, arch, nativePlatform string, err error) {
+	engineInfo, err := system.Info(r.connCtx, &system.InfoOptions{})
 	if err != nil {
-		return fmt.Errorf("initializing image engine at %q: %w", r.uri, err)
+		return "", "", "", fmt.Errorf("retrieving host info from %q: %w", r.name, err)
 	}
-	err = fn(connctx, engine)
-	engine.Shutdown(connctx)
-	return err
+	os = engineInfo.Host.OS
+	arch = engineInfo.Host.Arch
+	nativePlatform = os + "/" + arch // TODO: pester someone about returning variant info
+	return os, arch, nativePlatform, nil
 }
 
 func (r *podmanRemote) Info(ctx context.Context, options InfoOptions) (*Info, error) {
-	var nativePlatform string
-	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-		info, err := system.Info(ctx, &system.InfoOptions{})
-		if err != nil {
-			return fmt.Errorf("retrieving host info from %q: %w", r.name, err)
-		}
-		nativePlatform = info.Host.OS + "/" + info.Host.Arch // TODO: pester someone about returning variant info
-		return nil
+	r.platforms.Do(func() {
+		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
 	})
-	if err != nil {
-		return nil, err
-	}
-	return &Info{NativePlatform: nativePlatform}, err
+	return &Info{NativePlatform: r.nativePlatform}, r.platformsErr
+}
+
+func (r *podmanRemote) NativePlatform(ctx context.Context, options InfoOptions) (string, error) {
+	r.platforms.Do(func() {
+		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+	})
+	return r.nativePlatform, r.platformsErr
+}
+
+func (r *podmanRemote) EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error) {
+	r.platforms.Do(func() {
+		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, options)
+	})
+	return nil, r.platformsErr
 }
 
 func (r *podmanRemote) Status(ctx context.Context) error {
-	return r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error { return nil })
+	r.platforms.Do(func() {
+		r.os, r.arch, r.nativePlatform, r.platformsErr = r.fetchInfo(ctx, InfoOptions{})
+	})
+	return r.platformsErr
 }
 
 func (r *podmanRemote) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
-	var report *entities.BuildReport
 	var buildReport BuildReport
-	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-		var err error
-		theseOptions := options
-		theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
-		report, err = engine.Build(ctx, containerFiles, theseOptions)
-		if err != nil {
-			return fmt.Errorf("building for %q/%q/%q on %q: %w", r.os, r.arch, r.variant, r.name, err)
-		}
-		return nil
-	})
+	theseOptions := options
+	theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
+	report, err := r.engine.Build(ctx, containerFiles, theseOptions)
 	if err != nil {
-		return BuildReport{}, err
+		return buildReport, fmt.Errorf("building for %v on %q: %w", theseOptions.Platforms, r.name, err)
 	}
 	buildReport.ImageID = report.ID
 	buildReport.SaveFormat = "oci-archive"
@@ -127,16 +157,13 @@ func (r *podmanRemote) Build(ctx context.Context, reference string, containerFil
 }
 
 func (r *podmanRemote) PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error) {
-	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-		saveOptions := entities.ImageSaveOptions{
-			Format: options.SaveFormat,
-			Output: options.SaveFile,
-		}
-		if err := engine.Save(ctx, options.ImageID, nil, saveOptions); err != nil {
-			return fmt.Errorf("saving image %q: %w", options.ImageID, err)
-		}
-		return nil
-	})
+	saveOptions := entities.ImageSaveOptions{
+		Format: options.SaveFormat,
+		Output: options.SaveFile,
+	}
+	if err := r.engine.Save(ctx, options.ImageID, nil, saveOptions); err != nil {
+		return "", fmt.Errorf("saving image %q: %w", options.ImageID, err)
+	}
 	return options.SaveFormat + ":" + options.SaveFile, nil
 }
 
@@ -147,18 +174,12 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 	}
 	defer os.Remove(tempFile.Name())
 	defer tempFile.Close()
-	err = r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-		saveOptions := entities.ImageSaveOptions{
-			Format: options.SaveFormat,
-			Output: tempFile.Name(),
-		}
-		if err := engine.Save(ctx, options.ImageID, nil, saveOptions); err != nil {
-			return fmt.Errorf("saving image %q to temporary file: %w", options.ImageID, err)
-		}
-		return nil
-	})
-	if err != nil {
-		return "", err
+	saveOptions := entities.ImageSaveOptions{
+		Format: options.SaveFormat,
+		Output: tempFile.Name(),
+	}
+	if err := r.engine.Save(ctx, options.ImageID, nil, saveOptions); err != nil {
+		return "", fmt.Errorf("saving image %q to temporary file: %w", options.ImageID, err)
 	}
 	loadOptions := entities.ImageLoadOptions{
 		Input: tempFile.Name(),
@@ -175,27 +196,31 @@ func (r *podmanRemote) PullToLocal(ctx context.Context, options PullToLocalOptio
 }
 
 func (r *podmanRemote) RemoveImage(ctx context.Context, options RemoveImageOptions) error {
-	err := r.withEngine(ctx, func(ctx context.Context, engine entities.ImageEngine) error {
-		rmOptions := entities.ImageRemoveOptions{}
-		report, errs := engine.Remove(ctx, []string{options.ImageID}, rmOptions)
-		if len(errs) > 0 {
-			if len(errs) > 1 {
-				var err *multierror.Error
-				for _, e := range errs {
-					err = multierror.Append(err, e)
-				}
-				if multi := err.ErrorOrNil(); multi != nil {
-					return fmt.Errorf("removing intermediate image %q from remote %q: %w", options.ImageID, r.name, multi)
-				}
-				return nil
-			} else {
-				return fmt.Errorf("removing intermediate image %q from local storage: %w", options.ImageID, errs[0])
+	rmOptions := entities.ImageRemoveOptions{}
+	report, errs := r.engine.Remove(ctx, []string{options.ImageID}, rmOptions)
+	if len(errs) > 0 {
+		if len(errs) > 1 {
+			var err *multierror.Error
+			for _, e := range errs {
+				err = multierror.Append(err, e)
 			}
+			if multi := err.ErrorOrNil(); multi != nil {
+				return fmt.Errorf("removing intermediate image %q from remote %q: %w", options.ImageID, r.name, multi)
+			}
+			return nil
+		} else {
+			return fmt.Errorf("removing intermediate image %q from local storage: %w", options.ImageID, errs[0])
 		}
-		if report.ExitCode != 0 {
-			return fmt.Errorf("removing intermediate image %q from remote %q: status %d", options.ImageID, r.name, report.ExitCode)
-		}
-		return nil
-	})
-	return err
+	}
+	if report.ExitCode != 0 {
+		return fmt.Errorf("removing intermediate image %q from remote %q: status %d", options.ImageID, r.name, report.ExitCode)
+	}
+	return nil
+}
+
+func (r *podmanRemote) PruneImages(ctx context.Context, options PruneImageOptions) error {
+	if _, err := r.engine.Prune(ctx, entities.ImagePruneOptions{All: true, Filter: []string{"dangling=false"}}); err != nil {
+		return fmt.Errorf("removing unused images from remote %q: %w", r.name, err)
+	}
+	return nil
 }

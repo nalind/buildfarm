@@ -27,10 +27,11 @@ func platformsCmd(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		farmName = args[0]
 	}
-	farm, err := buildfarm.GetFarm(ctx, farmName, globalStorageOptions, nil)
+	farm, err := buildfarm.NewFarm(ctx, farmName, globalStorageOptions, nil)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}
+	globalFarm = farm
 	nativePlatforms, err := farm.NativePlatforms(ctx)
 	if err != nil {
 		return fmt.Errorf("getting native platforms: %w", err)

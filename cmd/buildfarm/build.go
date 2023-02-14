@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/containers/buildah/define"
+	"github.com/containers/buildah/pkg/util"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/nalind/buildfarm"
@@ -40,9 +42,8 @@ var (
 		Output: "localhost/test",
 		BuildOptions: entities.BuildOptions{
 			BuildOptions: define.BuildOptions{
-				ContextDirectory: ".",
-				Layers:           true,
-				CommonBuildOpts:  &define.CommonBuildOptions{},
+				Layers:          true,
+				CommonBuildOpts: &define.CommonBuildOptions{},
 			},
 		},
 	}
@@ -52,6 +53,17 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 	ctx := context.TODO()
 	if buildOpts.Output == "" {
 		return fmt.Errorf(`no output specified: expected -t "dir:/directory/path" or -t "registry.tld/repository/name:tag"`)
+	}
+	buildOpts.BuildOptions.ContextDirectory = args[0]
+	if buildOpts.BuildOptions.ContextDirectory == "" {
+		return fmt.Errorf("expected location of build context")
+	}
+	if !filepath.IsAbs(buildOpts.BuildOptions.ContextDirectory) {
+		contextDir, err := filepath.Abs(buildOpts.BuildOptions.ContextDirectory)
+		if err != nil {
+			return err
+		}
+		buildOpts.BuildOptions.ContextDirectory = contextDir
 	}
 	for _, arg := range buildOpts.cli.BuildArg {
 		if buildOpts.BuildOptions.Args == nil {
@@ -89,10 +101,26 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 	case "", "default", "if-missing":
 	default:
 	}
-	farm, err := buildfarm.GetFarm(ctx, "", globalStorageOptions, nil)
+	if len(buildOpts.Dockerfiles) == 0 {
+		dockerfile, err := util.DiscoverContainerfile(buildOpts.BuildOptions.ContextDirectory)
+		if err != nil {
+			return err
+		}
+		absDockerfile := dockerfile
+		if !filepath.IsAbs(dockerfile) {
+			absDockerfile, err = filepath.Abs(dockerfile)
+			if err != nil {
+				return err
+			}
+		}
+		buildOpts.Dockerfiles = append(buildOpts.Dockerfiles, absDockerfile)
+	}
+
+	farm, err := buildfarm.NewFarm(ctx, "", globalStorageOptions, nil)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}
+	globalFarm = farm
 
 	schedule, err := farm.Schedule(ctx, nil)
 	if err != nil {

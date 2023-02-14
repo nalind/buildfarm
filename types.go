@@ -7,12 +7,18 @@ import (
 )
 
 type ImageBuilder interface {
-	Info(ctx context.Context, options InfoOptions) (*Info, error)
+	Driver(ctx context.Context) string
+	Name(ctx context.Context) string
 	Status(ctx context.Context) error
+	Info(ctx context.Context, options InfoOptions) (*Info, error)
+	NativePlatform(ctx context.Context, options InfoOptions) (string, error)
+	EmulatedPlatforms(ctx context.Context, options InfoOptions) ([]string, error)
 	Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error)
 	PullToFile(ctx context.Context, options PullToFileOptions) (reference string, err error)
 	PullToLocal(ctx context.Context, options PullToLocalOptions) (reference string, err error)
 	RemoveImage(ctx context.Context, options RemoveImageOptions) error
+	PruneImages(ctx context.Context, options PruneImageOptions) error
+	Done(ctx context.Context) error
 }
 
 type InfoOptions struct {
@@ -44,6 +50,9 @@ type RemoveImageOptions struct {
 	ImageID string
 }
 
+type PruneImageOptions struct {
+}
+
 type ListBuilderOptions struct {
 	ForceRemoveIntermediates bool
 	RemoveIntermediates      bool
@@ -51,5 +60,5 @@ type ListBuilderOptions struct {
 }
 
 type ListBuilder interface {
-	Build(ctx context.Context, images map[BuildReport]ImageBuilder) error
+	Build(ctx context.Context, images map[BuildReport]ImageBuilder) (string, error)
 }

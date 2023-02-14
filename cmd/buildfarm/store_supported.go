@@ -19,7 +19,7 @@ func init() {
 }
 
 func storeBefore() error {
-	if globalSettings.noLocal {
+	if !globalSettings.local {
 		globalStorageOptions = nil
 		return nil
 	}

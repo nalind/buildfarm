@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 
@@ -24,17 +25,13 @@ import (
 type Farm struct {
 	Name         string
 	FlagSet      *pflag.FlagSet
-	storeOptions *storage.StoreOptions // not nil -> use local engine, too
-	Connections  []Connection
+	storeOptions *storage.StoreOptions   // not nil -> use local engine, too
+	Builders     map[string]ImageBuilder // name -> builder
 }
 
-// Connection represents a connection to a builder.
-type Connection struct {
-	Driver            string // empty/"local" or "podman-remote"
-	Name              string // empty -> local podman, probably
-	Builder           ImageBuilder
-	NativePlatform    string   // set when we polled it by calling its Info() method
-	EmulatedPlatforms []string // valid if NativePlatform is set
+// Schedule is a description of where and how we'll do builds.
+type Schedule struct {
+	PlatformBuilders map[string]string // target->connection
 }
 
 // CreateFarm creates an empty farm which will use a set of named connections
@@ -49,54 +46,92 @@ func UpdateFarm(ctx context.Context, add, remove []string) (*Farm, error) {
 	return nil, errors.New("not implemented")
 }
 
-// GetDefaultFarm returns a Farm that uses all known system connections and
+// NewDefaultFarm returns a Farm that uses all known system connections and
 // which has no name.  If storeOptions is not nil, the local system will be
 // included as an unnamed connection.
-func GetDefaultFarm(ctx context.Context, storeOptions *storage.StoreOptions, flags *pflag.FlagSet) (*Farm, error) {
+func NewDefaultFarm(ctx context.Context, storeOptions *storage.StoreOptions, flags *pflag.FlagSet) (*Farm, error) {
+	logrus.Info("initializing default farm")
+	defer logrus.Info("default farm ready")
 	custom, err := config.ReadCustomConfig()
 	if err != nil {
 		return nil, fmt.Errorf("reading custom config: %w", err)
 	}
-	farm := new(Farm)
+	farm := &Farm{
+		Builders: make(map[string]ImageBuilder),
+	}
 	if flags == nil {
 		flags = pflag.NewFlagSet("buildfarm", pflag.ExitOnError)
 	}
 	farm.FlagSet = flags
 	farm.storeOptions = storeOptions
+	var builderMutex sync.Mutex
+	var builderGroup multierror.Group
 	for dest := range custom.Engine.ServiceDestinations {
-		ib, err := NewPodmanRemoteImageBuilder(ctx, flags, dest)
-		if err != nil {
-			return nil, err
-		}
-		farm.Connections = append(farm.Connections, Connection{
-			Name:    dest,
-			Driver:  "podman-remote",
-			Builder: ib,
+		dest := dest
+		builderGroup.Go(func() error {
+			logrus.Infof("connecting to %q", dest)
+			defer logrus.Infof("builder %q ready", dest)
+			ib, err := NewPodmanRemoteImageBuilder(ctx, flags, dest)
+			if err != nil {
+				return err
+			}
+			builderMutex.Lock()
+			defer builderMutex.Unlock()
+			farm.Builders[dest] = ib
+			return nil
 		})
 	}
 	if farm.storeOptions != nil { // make a shallow copy - could/should be a deep copy?
-		ib, err := NewPodmanLocalImageBuilder(ctx, flags, farm.storeOptions)
-		if err != nil {
-			return nil, err
-		}
-		farm.Connections = append(farm.Connections, Connection{
-			Name:    "",
-			Driver:  "local",
-			Builder: ib,
+		builderGroup.Go(func() error {
+			logrus.Infof("setting up local builder")
+			defer logrus.Infof("local builder ready")
+			ib, err := NewPodmanLocalImageBuilder(ctx, flags, farm.storeOptions)
+			if err != nil {
+				return err
+			}
+			builderMutex.Lock()
+			defer builderMutex.Unlock()
+			farm.Builders[""] = ib
+			return nil
 		})
 	}
-	if len(farm.Connections) > 0 {
+	if builderError := builderGroup.Wait(); builderError != nil {
+		if err := builderError.ErrorOrNil(); err != nil {
+			return nil, err
+		}
+	}
+	if len(farm.Builders) > 0 {
 		return farm, nil
 	}
 	return nil, errors.New("no builders configured")
 }
 
-// GetFarm returns a Farm that uses a configured set of system connections.
-func GetFarm(ctx context.Context, name string, storeOptions *storage.StoreOptions, flags *pflag.FlagSet) (*Farm, error) {
+// GetFarm returns a Farm that has a configured set of system connections.
+func NewFarm(ctx context.Context, name string, storeOptions *storage.StoreOptions, flags *pflag.FlagSet) (*Farm, error) {
 	if name == "" {
-		return GetDefaultFarm(ctx, storeOptions, flags)
+		return NewDefaultFarm(ctx, storeOptions, flags)
 	}
 	return nil, errors.New("not implemented")
+}
+
+// Prune, well, prunes unused images from each of the builders.  We remove
+// images that we build after we've downloaded them when the Rm flag is true,
+// which is its default, but that still leaves base images that we caused to be
+// pulled lying around.
+func (f *Farm) PruneImages(ctx context.Context, options PruneImageOptions) error {
+	return f.ForEach(ctx, func(ctx context.Context, name string, ib ImageBuilder) (bool, error) {
+		err := ib.PruneImages(ctx, options)
+		return false, err
+	})
+}
+
+// Done performs any necessary end-of-process cleanup for the farm's
+// members.
+func (f *Farm) Done(ctx context.Context) error {
+	return f.ForEach(ctx, func(ctx context.Context, name string, ib ImageBuilder) (bool, error) {
+		err := ib.Done(ctx)
+		return false, err
+	})
 }
 
 // Status polls the connections in the farm and returns a map of their
@@ -106,14 +141,15 @@ func (f *Farm) Status(ctx context.Context) (map[string]error, error) {
 	status := make(map[string]error)
 	var statusMutex sync.Mutex
 	var statusGroup multierror.Group
-	for _, conn := range f.Connections {
-		conn := conn
+	for _, builder := range f.Builders {
+		builder := builder
 		statusGroup.Go(func() error {
-			logrus.Debugf("getting status of %q", conn.Name)
-			err := conn.Builder.Status(ctx)
+			logrus.Debugf("getting status of %q", builder.Name(ctx))
+			defer logrus.Debugf("got status of %q", builder.Name(ctx))
+			err := builder.Status(ctx)
 			statusMutex.Lock()
 			defer statusMutex.Unlock()
-			status[conn.Name] = err
+			status[builder.Name(ctx)] = err
 			return err
 		})
 	}
@@ -126,13 +162,14 @@ func (f *Farm) Status(ctx context.Context) (map[string]error, error) {
 }
 
 // ForEach runs the called function once for every node in the farm and
-// collects their results.  If the local node is configured, it is included.
+// collects their results, continuing until it finishes visiting every node or
+// a function call returns true as its first return value.
 func (f *Farm) ForEach(ctx context.Context, fn func(context.Context, string, ImageBuilder) (bool, error)) error {
 	var merr *multierror.Error
-	for _, conn := range f.Connections {
-		stop, err := fn(ctx, conn.Name, conn.Builder)
+	for name, builder := range f.Builders {
+		stop, err := fn(ctx, name, builder)
 		if err != nil {
-			merr = multierror.Append(merr, fmt.Errorf("%s: %w", conn.Name, err))
+			merr = multierror.Append(merr, fmt.Errorf("%s: %w", builder.Name(ctx), err))
 		}
 		if stop {
 			break
@@ -148,68 +185,74 @@ func (f *Farm) ForEach(ctx context.Context, fn func(context.Context, string, Ima
 // NativePlatforms returns a list of the set of platforms for which the farm
 // can build images natively.
 func (f *Farm) NativePlatforms(ctx context.Context) ([]string, error) {
-	var infoGroup multierror.Group
-	for i, conn := range f.Connections {
-		i, conn := i, conn
-		infoGroup.Go(func() error {
-			info, err := conn.Builder.Info(ctx, InfoOptions{})
+	options := InfoOptions{}
+	nativeMap := make(map[string]struct{})
+	var nativeMutex sync.Mutex
+	var nativeGroup multierror.Group
+	for _, builder := range f.Builders {
+		builder := builder
+		nativeGroup.Go(func() error {
+			logrus.Debugf("getting native platform of %q", builder.Name(ctx))
+			defer logrus.Debugf("got native platform of %q", builder.Name(ctx))
+			platform, err := builder.NativePlatform(ctx, options)
 			if err != nil {
 				return err
 			}
-			f.Connections[i].NativePlatform = info.NativePlatform
-			f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
+			nativeMutex.Lock()
+			defer nativeMutex.Unlock()
+			nativeMap[platform] = struct{}{}
 			return nil
 		})
 	}
-	merr := infoGroup.Wait()
+	merr := nativeGroup.Wait()
 	if merr != nil {
 		if err := merr.ErrorOrNil(); err != nil {
 			return nil, err
 		}
 	}
 	var platforms []string
-	nativeMap := make(map[string]struct{})
-	for _, conn := range f.Connections {
-		if _, ok := nativeMap[conn.NativePlatform]; !ok {
-			platforms = append(platforms, conn.NativePlatform)
-			nativeMap[conn.NativePlatform] = struct{}{}
-		}
+	for platform := range nativeMap {
+		platforms = append(platforms, platform)
 	}
+	sort.Strings(platforms)
 	return platforms, nil
 }
 
 // EmulatedPlatforms returns a list of the set of platforms for which the farm
 // can build images with the help of emulation.
 func (f *Farm) EmulatedPlatforms(ctx context.Context) ([]string, error) {
-	var infoGroup multierror.Group
-	for i, conn := range f.Connections {
-		i, conn := i, conn
-		infoGroup.Go(func() error {
-			info, err := conn.Builder.Info(ctx, InfoOptions{})
+	options := InfoOptions{}
+	emulatedMap := make(map[string]struct{})
+	var emulatedMutex sync.Mutex
+	var emulatedGroup multierror.Group
+	for _, builder := range f.Builders {
+		builder := builder
+		emulatedGroup.Go(func() error {
+			logrus.Debugf("getting emulated platforms of %q", builder.Name(ctx))
+			defer logrus.Debugf("got emulated platforms of %q", builder.Name(ctx))
+			emulatedPlatforms, err := builder.EmulatedPlatforms(ctx, options)
 			if err != nil {
 				return err
 			}
-			f.Connections[i].NativePlatform = info.NativePlatform
-			f.Connections[i].EmulatedPlatforms = info.EmulatedPlatforms
+			emulatedMutex.Lock()
+			defer emulatedMutex.Unlock()
+			for _, platform := range emulatedPlatforms {
+				emulatedMap[platform] = struct{}{}
+			}
 			return nil
 		})
 	}
-	merr := infoGroup.Wait()
+	merr := emulatedGroup.Wait()
 	if merr != nil {
 		if err := merr.ErrorOrNil(); err != nil {
 			return nil, err
 		}
 	}
 	var platforms []string
-	emulatedMap := make(map[string]struct{})
-	for _, conn := range f.Connections {
-		for _, platform := range conn.EmulatedPlatforms {
-			if _, ok := emulatedMap[platform]; !ok {
-				platforms = append(platforms, platform)
-				emulatedMap[platform] = struct{}{}
-			}
-		}
+	for platform := range emulatedMap {
+		platforms = append(platforms, platform)
 	}
+	sort.Strings(platforms)
 	return platforms, nil
 }
 
@@ -223,37 +266,37 @@ func (f *Farm) EmulatedPlatforms(ctx context.Context) ([]string, error) {
 //
 // TODO: add (Priority,Weight *int) a la RFC 2782 to Connections and factor
 // them in when assigning builds to nodes in here.
-func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]string, error) {
+func (f *Farm) Schedule(ctx context.Context, platforms []string) (Schedule, error) {
 	var err error
 	// If we weren't given a list of target platforms, generate one.
 	if len(platforms) == 0 {
 		platforms, err = f.NativePlatforms(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("reading list of available native platforms: %w", err)
+			return Schedule{}, fmt.Errorf("reading list of available native platforms: %w", err)
 		}
 	}
-	scheduled := make(map[string]string)
+	platformBuilders := make(map[string]string)
 	native := make(map[string]string)
 	emulated := make(map[string]string)
 	// Make notes of which platforms we can build for natively, and which
 	// ones we can build for using emulation.
 	var infoGroup multierror.Group
 	var infoMutex sync.Mutex
-	for i, conn := range f.Connections {
-		i, conn := i, conn
+	for name, builder := range f.Builders {
+		name, builder := name, builder
 		infoGroup.Go(func() error {
-			info, err := conn.Builder.Info(ctx, InfoOptions{})
+			info, err := builder.Info(ctx, InfoOptions{})
 			if err != nil {
 				return err
 			}
 			infoMutex.Lock()
 			defer infoMutex.Unlock()
 			if _, assigned := native[info.NativePlatform]; !assigned {
-				native[info.NativePlatform] = conn.Name
+				native[info.NativePlatform] = name
 			}
-			for _, e := range f.Connections[i].EmulatedPlatforms {
+			for _, e := range info.EmulatedPlatforms {
 				if _, assigned := emulated[e]; !assigned {
-					emulated[e] = conn.Name
+					emulated[e] = name
 				}
 			}
 			return nil
@@ -262,7 +305,7 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]str
 	merr := infoGroup.Wait()
 	if merr != nil {
 		if err := merr.ErrorOrNil(); err != nil {
-			return nil, err
+			return Schedule{}, err
 		}
 	}
 	// Assign a build to the first node that could build it natively, and
@@ -270,20 +313,23 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (map[string]str
 	// emulation, and if there aren't any, error out.
 	for _, platform := range platforms {
 		if builder, ok := native[platform]; ok {
-			scheduled[platform] = builder
+			platformBuilders[platform] = builder
 		} else if builder, ok := emulated[platform]; ok {
-			scheduled[platform] = builder
+			platformBuilders[platform] = builder
 		} else {
-			return nil, fmt.Errorf("no builder capable of building for platform %q available", platform)
+			return Schedule{}, fmt.Errorf("no builder capable of building for platform %q available", platform)
 		}
 	}
-	return scheduled, nil
+	schedule := Schedule{
+		PlatformBuilders: platformBuilders,
+	}
+	return schedule, nil
 }
 
 // Build runs a build using the specified targetplatform:service map.  If all
 // builds succeed, it copies the resulting images from the remote hosts to the
 // local service and builds a manifest list with the specified reference name.
-func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]string, containerFiles []string, options entities.BuildOptions) error {
+func (f *Farm) Build(ctx context.Context, reference string, schedule Schedule, containerFiles []string, options entities.BuildOptions) error {
 	switch options.OutputFormat {
 	default:
 		return fmt.Errorf("unknown output format %q requested", options.OutputFormat)
@@ -292,22 +338,17 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 	case define.Dockerv2ImageManifest:
 	}
 
-	connectionByName := make(map[string]*Connection)
-	for i := range f.Connections {
-		connectionByName[f.Connections[i].Name] = &f.Connections[i]
-	}
-
 	// Build the list of jobs.
-	var connections sync.Map
-	type connection struct {
+	var jobs sync.Map
+	type job struct {
 		platform string
 		os       string
 		arch     string
 		variant  string
 		builder  ImageBuilder
 	}
-	for platform, builderName := range schedule { // prepare to build
-		builder, ok := connectionByName[builderName]
+	for platform, builderName := range schedule.PlatformBuilders { // prepare to build
+		builder, ok := f.Builders[builderName]
 		if !ok {
 			return fmt.Errorf("unknown builder %q", builderName)
 		}
@@ -323,12 +364,12 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 			rawVariant = p[2]
 		}
 		os, arch, variant := libimage.NormalizePlatform(rawOS, rawArch, rawVariant)
-		connections.Store(builderName, connection{
+		jobs.Store(builderName, job{
 			platform: platform,
 			os:       os,
 			arch:     arch,
 			variant:  variant,
-			builder:  builder.Builder,
+			builder:  builder,
 		})
 	}
 
@@ -357,9 +398,8 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		report  BuildReport
 		builder ImageBuilder
 	}
-	for platform, builder := range schedule {
-		platform := platform
-		builder := builder
+	for platform, builder := range schedule.PlatformBuilders {
+		platform, builder := platform, builder
 		outReader, outWriter := io.Pipe()
 		errReader, errWriter := io.Pipe()
 		go func() {
@@ -391,28 +431,30 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 			}
 		}()
 		buildGroup.Go(func() error {
-			var conn connection
+			var j job
 			defer outWriter.Close()
 			defer errWriter.Close()
-			c, ok := connections.Load(builder)
+			c, ok := jobs.Load(builder)
 			if !ok {
 				return fmt.Errorf("unknown connection for %q (shouldn't happen)", builder)
 			}
-			if conn, ok = c.(connection); !ok {
+			if j, ok = c.(job); !ok {
 				return fmt.Errorf("unexpected connection type for %q (shouldn't happen)", builder)
 			}
 			theseOptions := options
 			theseOptions.IIDFile = ""
-			theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{conn.os, conn.arch, conn.variant}}
+			theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{j.os, j.arch, j.variant}}
 			theseOptions.Out = outWriter
 			theseOptions.Err = errWriter
-			buildReport, err := conn.builder.Build(ctx, "", containerFiles, theseOptions)
+			logrus.Infof("starting build for %v at %q", theseOptions.Platforms, builder)
+			buildReport, err := j.builder.Build(ctx, "", containerFiles, theseOptions)
 			if err != nil {
-				return fmt.Errorf("building for %q on %q: %w", conn.platform, builder, err)
+				return fmt.Errorf("building for %q on %q: %w", j.platform, builder, err)
 			}
+			logrus.Infof("finished build for %v at %q: built %s", theseOptions.Platforms, builder, buildReport.ImageID)
 			buildResults.Store(platform, buildResult{
 				report:  buildReport,
-				builder: conn.builder,
+				builder: j.builder,
 			})
 			return nil
 		})
@@ -433,8 +475,10 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule map[string]
 		perArchBuilds[result.report] = result.builder
 		return true
 	})
-	if err := listBuilder.Build(ctx, perArchBuilds); err != nil {
+	location, err := listBuilder.Build(ctx, perArchBuilds)
+	if err != nil {
 		return err
 	}
+	logrus.Infof("saved list to %q", location)
 	return nil
 }
