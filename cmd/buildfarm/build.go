@@ -137,8 +137,8 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 
 func init() {
 	mainCmd.AddCommand(buildCommand)
-	// We intentionally avoid reusing parsing logic in buildah that also
-	// sets options which aren't supported for remote builds.
+	// We intentionally avoid reusing parsing logic in buildah to not
+	// advertise options which aren't supported for remote builds.
 	buildCommand.PersistentFlags().StringVarP(&buildOpts.Output, "tag", "t", "", "output location")
 	buildCommand.PersistentFlags().StringSliceVarP(&buildOpts.Dockerfiles, "file", "f", nil, "dockerfile")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.BuildOptions.Labels, "label", nil, "set `label=value` in output images")
