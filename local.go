@@ -383,6 +383,9 @@ func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 	if l.options.RemoveIntermediates {
 		var rmGroup multierror.Group
 		for image, engine := range images {
+			if engine.Name(ctx) == LocalImageBuilderName {
+				continue
+			}
 			image, engine := image, engine
 			rmGroup.Go(func() error {
 				return engine.RemoveImage(ctx, RemoveImageOptions{ImageID: image.ImageID})
