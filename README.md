@@ -1,4 +1,4 @@
-podman buildfarm/team/crew
+podman buildfarm/team/crew/bunch
 ==
 (still workshopping the name)
 
@@ -28,7 +28,7 @@ If the `podman` instances that it uses for performing builds are running on diff
 
 They can then all be pushed, as a group, to a registry by `podman manifest push --all`.
 
-That should sound familiar.
+It's intentional that the final push step is the same as it would have been after `podman build --manifest`.
 
 What does that look like?
 --
@@ -42,7 +42,7 @@ Run everything locally using emulation (podman 4.0 and later):
 ```
 Notes:
 * Emulation works at the instruction level, so binaries which are run using emulation still see the host's true CPU information in `/proc/cpuinfo`, which can confuse them.
-* `qemu-user` emulators use multiple threads, and certain system calls which they make on behalf of single-threaded binaries that they are interpreting can fail in ways those binaries do not expect.
+* `qemu-user` emulators use multiple threads, and this can cause certain system calls which they make on behalf of single-threaded binaries that they are interpreting to fail in ways those binaries do not expect.
 
 Use remote machines to do the heavy lifting (this repository):
 ```bash!
