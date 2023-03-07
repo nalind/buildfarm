@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/containers/buildah/define"
 	"github.com/containers/common/pkg/config"
 	istorage "github.com/containers/image/v5/storage"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -123,7 +122,7 @@ func (r *dockerEngine) Status(ctx context.Context) error {
 
 // Build attempts a build using the specified build options.  If the build
 // succeeds, it returns the built image's ID.
-func (r *dockerEngine) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
+func (r *dockerEngine) Build(ctx context.Context, reference string, containerFiles []string, options BuildOptions) (BuildReport, error) {
 	var report *entities.BuildReport
 	var buildReport BuildReport
 	dockerfile := ""
@@ -142,25 +141,16 @@ func (r *dockerEngine) Build(ctx context.Context, reference string, containerFil
 			return buildReport, fmt.Errorf("parsing requested label %q", label)
 		}
 	}
-	shmSize, err := units.RAMInBytes(options.CommonBuildOpts.ShmSize)
+	shmSize, err := units.RAMInBytes(options.ShmSize)
 	if err != nil {
-		return buildReport, fmt.Errorf("parsing requested shmsize %q", options.CommonBuildOpts.ShmSize)
-	}
-	pull := false
-	switch options.PullPolicy {
-	case define.PullAlways, define.PullIfMissing, define.PullIfNewer:
-		pull = true
-	case define.PullNever:
-		pull = false
-	default:
-		pull = true
+		return buildReport, fmt.Errorf("parsing requested shmsize %q", options.ShmSize)
 	}
 	var buildArgs []docker.BuildArg
 	for arg, value := range options.Args {
 		buildArgs = append(buildArgs, docker.BuildArg{Name: arg, Value: value})
 	}
 	var ulimits []docker.ULimit
-	for _, ulimit := range options.CommonBuildOpts.Ulimit {
+	for _, ulimit := range options.Ulimit {
 		u := strings.SplitN(ulimit, "=", 2)
 		if len(u) != 2 {
 			return buildReport, fmt.Errorf(`parsing ulimit %q: expected "limit=soft[:hard]"`, ulimit)
@@ -206,22 +196,22 @@ func (r *dockerEngine) Build(ctx context.Context, reference string, containerFil
 		Context:             ctx,
 		ContextDir:          options.ContextDirectory,
 		Dockerfile:          dockerfile,
-		RmTmpContainer:      options.RemoveIntermediateCtrs,
-		ForceRmTmpContainer: options.ForceRmIntermediateCtrs,
+		RmTmpContainer:      options.RemoveIntermediateContainers,
+		ForceRmTmpContainer: options.ForceRemoveIntermediateContainers,
 		ExtraHosts:          "",
 		CacheFrom:           nil,
 		Labels:              labelsMap,
-		Memory:              options.CommonBuildOpts.Memory,
-		Memswap:             options.CommonBuildOpts.MemorySwap,
+		Memory:              options.Memory,
+		Memswap:             options.MemorySwap,
 		ShmSize:             shmSize,
-		CPUShares:           int64(options.CommonBuildOpts.CPUShares),
-		CPUQuota:            options.CommonBuildOpts.CPUQuota,
-		CPUPeriod:           int64(options.CommonBuildOpts.CPUPeriod),
-		CPUSetCPUs:          options.CommonBuildOpts.CPUSetCPUs,
-		CgroupParent:        options.CommonBuildOpts.CgroupParent,
+		CPUShares:           int64(options.CPUShares),
+		CPUQuota:            options.CPUQuota,
+		CPUPeriod:           int64(options.CPUPeriod),
+		CPUSetCPUs:          options.CPUSetCPUs,
+		CgroupParent:        options.CgroupParent,
 		NoCache:             options.NoCache,
 		SuppressOutput:      options.Quiet,
-		Pull:                pull,
+		Pull:                options.Pull,
 		BuildArgs:           buildArgs,
 		Ulimits:             ulimits,
 		/* TODO

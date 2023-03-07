@@ -112,7 +112,7 @@ func (m *listFiles) Build(ctx context.Context, images map[BuildReport]ImageBuild
 		return "", fmt.Errorf("building: %w", err)
 	}
 
-	if m.options.RemoveIntermediates {
+	if m.options.RemoveIntermediateImages {
 		var rmGroup multierror.Group
 		for image, engine := range images {
 			image, engine := image, engine

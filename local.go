@@ -162,7 +162,7 @@ func (l *podmanLocal) Status(ctx context.Context) error {
 
 // Build attempts a build using the specified build options.  If the build
 // succeeds, it returns the built image's ID.
-func (l *podmanLocal) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
+func (l *podmanLocal) Build(ctx context.Context, outputReference string, containerFiles []string, options BuildOptions) (BuildReport, error) {
 	var buildReport BuildReport
 	l.platforms.Do(func() {
 		l.os, l.arch, l.variant, l.nativePlatforms, l.emulatedPlatforms, l.platformsErr = l.fetchInfo(ctx, InfoOptions{})
@@ -170,8 +170,7 @@ func (l *podmanLocal) Build(ctx context.Context, reference string, containerFile
 	if l.platformsErr != nil {
 		return buildReport, fmt.Errorf("determining local platform: %w", l.platformsErr)
 	}
-	theseOptions := options
-	theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{l.os, l.arch, l.variant}}
+	theseOptions := podmanBuildOptionsFromBuildOptions(options, l.os, l.arch, l.variant)
 	report, err := l.engine.Build(ctx, containerFiles, theseOptions)
 	if err != nil {
 		return buildReport, fmt.Errorf("building for %v locally: %w", theseOptions.Platforms, err)
@@ -380,7 +379,7 @@ func (l *listLocal) Build(ctx context.Context, images map[BuildReport]ImageBuild
 		return "", fmt.Errorf("building: %w", err)
 	}
 
-	if l.options.RemoveIntermediates {
+	if l.options.RemoveIntermediateImages {
 		var rmGroup multierror.Group
 		for image, engine := range images {
 			if engine.Name(ctx) == LocalImageBuilderName {

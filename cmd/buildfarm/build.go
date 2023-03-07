@@ -6,10 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/pkg/util"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/nalind/buildfarm"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -17,14 +16,14 @@ import (
 type buildOptions struct {
 	output       string
 	dockerfiles  []string
-	buildOptions entities.BuildOptions
+	buildOptions buildfarm.BuildOptions
 	platforms    []string
 	cli          struct {
 		BuildArg  []string
 		CacheFrom []string
+		CacheTo   []string
 		Isolation string
 		Network   string
-		Pull      string
 	}
 }
 
@@ -39,13 +38,8 @@ var (
 		Args:    cobra.ExactArgs(1),
 	}
 	buildOpts = buildOptions{
-		output: "localhost/test",
-		buildOptions: entities.BuildOptions{
-			BuildOptions: define.BuildOptions{
-				Layers:          true,
-				CommonBuildOpts: &define.CommonBuildOptions{},
-			},
-		},
+		output:       "localhost/test",
+		buildOptions: buildfarm.BuildOptions{},
 	}
 )
 
@@ -83,23 +77,19 @@ func buildCmd(cmd *cobra.Command, args []string) error {
 		}
 		buildOpts.buildOptions.CacheFrom = append(buildOpts.buildOptions.CacheFrom, name)
 	}
+	for _, cacheTo := range buildOpts.cli.CacheTo {
+		name, err := reference.ParseNamed(cacheTo)
+		if err != nil {
+			return fmt.Errorf("parsing reference %q: %w", cacheTo, err)
+		}
+		buildOpts.buildOptions.CacheTo = append(buildOpts.buildOptions.CacheTo, name)
+	}
 	switch buildOpts.cli.Network {
 	case "", "default":
 		// nothing
 	case "none":
-		buildOpts.buildOptions.ConfigureNetwork = define.NetworkDisabled
-	}
-	switch buildOpts.cli.Pull {
-	case define.PullIfMissing.String():
-		buildOpts.buildOptions.PullPolicy = define.PullIfMissing
-	case define.PullIfNewer.String():
-		buildOpts.buildOptions.PullPolicy = define.PullIfNewer
-	case "true", "always", define.PullAlways.String():
-		buildOpts.buildOptions.PullPolicy = define.PullAlways
-	case "false", "never", define.PullNever.String():
-		buildOpts.buildOptions.PullPolicy = define.PullNever
-	case "", "default", "if-missing":
-	default:
+		configureNetwork := false
+		buildOpts.buildOptions.ConfigureNetwork = &configureNetwork
 	}
 	if len(buildOpts.dockerfiles) == 0 {
 		dockerfile, err := util.DiscoverContainerfile(buildOpts.buildOptions.ContextDirectory)
@@ -143,26 +133,28 @@ func init() {
 	buildCommand.PersistentFlags().StringVarP(&buildOpts.output, "tag", "t", "", "output location")
 	buildCommand.PersistentFlags().StringSliceVarP(&buildOpts.dockerfiles, "file", "f", nil, "dockerfile")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.buildOptions.Labels, "label", nil, "set `label=value` in output images")
-	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.RemoveIntermediateCtrs, "rm", true, "remove intermediate containers on success")
-	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.ForceRmIntermediateCtrs, "force-rm", true, "remove intermediate containers, even if the build fails")
-	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.buildOptions.CommonBuildOpts.AddHost, "add-host", nil, "add custom host-to-IP mappings")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.RemoveIntermediateContainers, "rm", true, "remove intermediate containers on success")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.ForceRemoveIntermediateContainers, "force-rm", true, "remove intermediate containers, even if the build fails")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.RemoveIntermediateImages, "rm-images", true, "remove images from builders on success")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.PruneImagesOnSuccess, "prune", false, "prune images from builders on success")
+	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.buildOptions.AddHost, "add-host", nil, "add custom host-to-IP mappings")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.cli.BuildArg, "build-arg", nil, "build-time variable")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.cli.CacheFrom, "cache-from", nil, "cache source repositories")
-	buildCommand.PersistentFlags().Uint64Var(&buildOpts.buildOptions.CommonBuildOpts.CPUPeriod, "cpu-period", 0, "CPU CFS period")
-	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.CommonBuildOpts.CPUQuota, "cpu-quota", 0, "CPU CFS quota")
-	buildCommand.PersistentFlags().Uint64VarP(&buildOpts.buildOptions.CommonBuildOpts.CPUShares, "cpu-shares", "c", 0, "CPU CFS quota")
-	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.CommonBuildOpts.CPUSetCPUs, "cpuset-cpus", "", "CPUs to allow execution")
-	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.CommonBuildOpts.CPUSetMems, "cpuset-mems", "", "MEMs to allow execution")
+	buildCommand.PersistentFlags().Uint64Var(&buildOpts.buildOptions.CPUPeriod, "cpu-period", 0, "CPU CFS period")
+	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.CPUQuota, "cpu-quota", 0, "CPU CFS quota")
+	buildCommand.PersistentFlags().Uint64VarP(&buildOpts.buildOptions.CPUShares, "cpu-shares", "c", 0, "CPU CFS quota")
+	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.CPUSetCPUs, "cpuset-cpus", "", "CPUs to allow execution")
+	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.CPUSetMems, "cpuset-mems", "", "MEMs to allow execution")
 	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.IIDFile, "iidfile", "", "write manifest list ID to file")
 	buildCommand.PersistentFlags().StringVar(&buildOpts.cli.Isolation, "isolation", "", "RUN isolation")
-	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.CommonBuildOpts.Memory, "memory", 0, "memory limit")
-	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.CommonBuildOpts.MemorySwap, "memory-swap", 0, "memory+swap limit")
+	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.Memory, "memory", 0, "memory limit")
+	buildCommand.PersistentFlags().Int64Var(&buildOpts.buildOptions.MemorySwap, "memory-swap", 0, "memory+swap limit")
 	buildCommand.PersistentFlags().StringVar(&buildOpts.cli.Network, "network", "", "RUN network")
 	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.NoCache, "no-cache", false, "disable build cache")
-	buildCommand.PersistentFlags().StringVar(&buildOpts.cli.Pull, "pull", define.PullIfMissing.String(), "always try to pull newer versions of images")
+	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.Pull, "pull", false, "always try to pull newer versions of images")
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.platforms, "platform", nil, "target platforms")
 	buildCommand.PersistentFlags().BoolVar(&buildOpts.buildOptions.Quiet, "quiet", false, "suppress build output")
-	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.CommonBuildOpts.ShmSize, "shm-size", "", "size of /dev/shm")
+	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.ShmSize, "shm-size", "", "size of /dev/shm")
 	buildCommand.PersistentFlags().StringVar(&buildOpts.buildOptions.Target, "target", "", "final stage to build")
-	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.buildOptions.CommonBuildOpts.Ulimit, "ulimit", nil, "resource limits")
+	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.buildOptions.Ulimit, "ulimit", nil, "resource limits")
 }

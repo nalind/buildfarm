@@ -154,10 +154,9 @@ func (r *podmanRemote) Status(ctx context.Context) error {
 
 // Build attempts a build using the specified build options.  If the build
 // succeeds, it returns the built image's ID.
-func (r *podmanRemote) Build(ctx context.Context, reference string, containerFiles []string, options entities.BuildOptions) (BuildReport, error) {
+func (r *podmanRemote) Build(ctx context.Context, outputReference string, containerFiles []string, options BuildOptions) (BuildReport, error) {
 	var buildReport BuildReport
-	theseOptions := options
-	theseOptions.Platforms = []struct{ OS, Arch, Variant string }{{r.os, r.arch, r.variant}}
+	theseOptions := podmanBuildOptionsFromBuildOptions(options, r.os, r.arch, r.variant)
 	report, err := r.engine.Build(ctx, containerFiles, theseOptions)
 	if err != nil {
 		return buildReport, fmt.Errorf("building for %v on %q: %w", theseOptions.Platforms, r.name, err)

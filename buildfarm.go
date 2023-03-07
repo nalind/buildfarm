@@ -15,7 +15,6 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/storage"
 	"github.com/hashicorp/go-multierror"
 	"github.com/sirupsen/logrus"
@@ -367,7 +366,7 @@ func (f *Farm) Schedule(ctx context.Context, platforms []string) (Schedule, erro
 // Build runs a build using the specified targetplatform:service map.  If all
 // builds succeed, it copies the resulting images from the remote hosts to the
 // local service and builds a manifest list with the specified reference name.
-func (f *Farm) Build(ctx context.Context, reference string, schedule Schedule, containerFiles []string, options entities.BuildOptions) error {
+func (f *Farm) Build(ctx context.Context, reference string, schedule Schedule, containerFiles []string, options BuildOptions) error {
 	switch options.OutputFormat {
 	default:
 		return fmt.Errorf("unknown output format %q requested", options.OutputFormat)
@@ -415,9 +414,11 @@ func (f *Farm) Build(ctx context.Context, reference string, schedule Schedule, c
 	var listBuilder ListBuilder
 	var err error
 	listBuilderOptions := ListBuilderOptions{
-		ForceRemoveIntermediates: options.ForceRmIntermediateCtrs,
-		RemoveIntermediates:      options.RemoveIntermediateCtrs,
-		IIDFile:                  options.IIDFile,
+		ForceRemoveIntermediateContainers: options.ForceRemoveIntermediateContainers,
+		RemoveIntermediateContainers:      options.RemoveIntermediateContainers,
+		RemoveIntermediateImages:          options.RemoveIntermediateImages,
+		PruneImagesOnSuccess:              options.PruneImagesOnSuccess,
+		IIDFile:                           options.IIDFile,
 	}
 	if strings.HasPrefix(reference, "dir:") || f.storeOptions == nil {
 		location := strings.TrimPrefix(reference, "dir:")
