@@ -9,10 +9,10 @@ import (
 )
 
 var (
-	pruneDescription = `Prunes untagged and optionall unused images from a build farm.`
+	pruneDescription = `Prunes untagged and optionally unused images from a build farm.`
 	pruneCommand     = &cobra.Command{
 		Use:     "prune",
-		Short:   "Prunes untagged and optionall unused images on the nodes in a build farm",
+		Short:   "Prunes untagged and optionally unused images on the nodes in a build farm",
 		Long:    pruneDescription,
 		RunE:    pruneCmd,
 		Example: "  prune [flags] [farm]",
