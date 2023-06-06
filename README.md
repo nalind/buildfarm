@@ -43,6 +43,7 @@ Run everything locally using emulation (podman 4.0 and later):
 Notes:
 * Emulation works at the instruction level, so binaries which are run using emulation still see the host's true CPU information in `/proc/cpuinfo`, which can confuse them.
 * `qemu-user` emulators use multiple threads, and this can cause certain system calls which they make on behalf of single-threaded binaries that they are interpreting to fail in ways those binaries do not expect.
+* `qemu-user-static` emulators typically are not registered with the kernel's `binfmt_misc` feature with the flag ("C") that would be required for allowing interpreted setuid/setgid binaries to run setuid/setgid.
 
 Use remote machines to do the heavy lifting (this repository):
 ```bash!

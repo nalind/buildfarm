@@ -279,10 +279,19 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 			defer func() { _ = os.Remove(f.Name()) }()
 		}
 	default:
-		// This code was added to allow for opening stdout replacing
-		// os.Create(opts.Output) which was attempting to open the file
-		// for read/write which fails on Darwin platforms
-		f, err = os.OpenFile(opts.Output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		// This is ugly but I think the best we can do for now,
+		// on windows there is no /dev/stdout but the save command defaults to /dev/stdout.
+		// The proper thing to do would be to pass an io.Writer down from the cli frontend
+		// but since the local save API does not support an io.Writer this is impossible.
+		// I reported it a while ago in https://github.com/containers/common/issues/1275
+		if opts.Output == "/dev/stdout" {
+			f = os.Stdout
+		} else {
+			// This code was added to allow for opening stdout replacing
+			// os.Create(opts.Output) which was attempting to open the file
+			// for read/write which fails on Darwin platforms
+			f, err = os.OpenFile(opts.Output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		}
 	}
 	if err != nil {
 		return err
@@ -340,7 +349,7 @@ func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.Im
 
 	options := new(images.SearchOptions)
 	options.WithAuthfile(opts.Authfile).WithFilters(mappedFilters).WithLimit(opts.Limit)
-	options.WithListTags(opts.ListTags)
+	options.WithListTags(opts.ListTags).WithPassword(opts.Password).WithUsername(opts.Username)
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
 			options.WithSkipTLSVerify(true)
