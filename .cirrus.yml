@@ -1,11 +1,12 @@
+container:
+    image: registry.fedoraproject.org/fedora
+
 build_task:
     name: CI
     env:
         HOME: /root
-        DEBIAN_FRONTEND: noninteractive
     build_script: |
-        apt-get -q update
-        apt-get -q install -y bats cryptsetup gcc golang make podman libbtrfs-dev libgpgme-dev libdevmapper-dev
+        dnf -y install bats golang make podman btrfs-progs-devel gpgme-devel device-mapper-devel
         gcc -v
         go version
         make
