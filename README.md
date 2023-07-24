@@ -1,4 +1,4 @@
-podman buildfarm/team/crew/bunch
+podman buildfarm/team/crew/bunch [![Cirrus CI Status](https://img.shields.io/cirrus/github/nalind/buildfarm/main)](https://cirrus-ci.com/github/nalind/buildfarm/main)
 ==
 (still workshopping the name)
 
