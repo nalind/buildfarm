@@ -4,10 +4,10 @@ go 1.20
 
 require (
 	github.com/containers/buildah v1.31.1
-	github.com/containers/common v0.55.2
+	github.com/containers/common v0.55.4
 	github.com/containers/image/v5 v5.27.0
 	github.com/containers/podman/v4 v4.6.0
-	github.com/containers/storage v1.48.0
+	github.com/containers/storage v1.48.1
 	github.com/docker/go-units v0.5.0
 	github.com/fsouza/go-dockerclient v1.9.7
 	github.com/hashicorp/go-multierror v1.1.1
