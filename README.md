@@ -2,6 +2,8 @@ podman buildfarm/team/crew/bunch [![Cirrus CI Status](https://img.shields.io/cir
 ==
 (still workshopping the name)
 
++**This repository is a PoC for a feature in [podman](https://github.com/containers/podman), and once the feature arrives in a podman release, this repository will be archived.**
+
 What are we doing here?
 --
 We're living in a future when building container images for just one target architecture isn't always enough.  An image built in one place can may be expected to run as a container in clouds, on workstations, on smaller/edge/embedded devices, and in places I haven't thought to list, and those devices won't always share a common CPU architecture.
