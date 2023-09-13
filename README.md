@@ -2,7 +2,7 @@ podman buildfarm/team/crew/bunch [![Cirrus CI Status](https://img.shields.io/cir
 ==
 (still workshopping the name)
 
-+**This repository is a PoC for a feature in [podman](https://github.com/containers/podman), and once the feature arrives in a podman release, this repository will be archived.**
+**This repository is a PoC for a feature in [podman](https://github.com/containers/podman), and once the feature arrives in a podman release, this repository will be archived.**
 
 What are we doing here?
 --
