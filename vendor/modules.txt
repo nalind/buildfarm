@@ -51,6 +51,9 @@ github.com/VividCortex/ewma
 # github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d
 ## explicit
 github.com/acarl005/stripansi
+# github.com/aead/serpent v0.0.0-20160714141033-fba169763ea6
+## explicit
+github.com/aead/serpent
 # github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 ## explicit; go 1.13
 github.com/asaskevich/govalidator
@@ -68,15 +71,18 @@ github.com/checkpoint-restore/go-criu/v6/stats
 # github.com/chzyer/readline v1.5.1
 ## explicit; go 1.15
 github.com/chzyer/readline
-# github.com/container-orchestrated-devices/container-device-interface v0.5.4
+# github.com/container-orchestrated-devices/container-device-interface v0.6.1
 ## explicit; go 1.17
 github.com/container-orchestrated-devices/container-device-interface/internal/multierror
+github.com/container-orchestrated-devices/container-device-interface/internal/validation
+github.com/container-orchestrated-devices/container-device-interface/internal/validation/k8s
 github.com/container-orchestrated-devices/container-device-interface/pkg/cdi
+github.com/container-orchestrated-devices/container-device-interface/pkg/parser
 github.com/container-orchestrated-devices/container-device-interface/specs-go
 # github.com/containerd/cgroups/v3 v3.0.2
 ## explicit; go 1.18
 github.com/containerd/cgroups/v3/cgroup1/stats
-# github.com/containerd/containerd v1.7.2
+# github.com/containerd/containerd v1.7.6
 ## explicit; go 1.19
 github.com/containerd/containerd/errdefs
 github.com/containerd/containerd/log
@@ -101,7 +107,7 @@ github.com/containernetworking/cni/pkg/version
 # github.com/containernetworking/plugins v1.3.0
 ## explicit; go 1.20
 github.com/containernetworking/plugins/pkg/ns
-# github.com/containers/buildah v1.31.3
+# github.com/containers/buildah v1.32.0
 ## explicit; go 1.18
 github.com/containers/buildah
 github.com/containers/buildah/bind
@@ -111,8 +117,12 @@ github.com/containers/buildah/define
 github.com/containers/buildah/docker
 github.com/containers/buildah/imagebuildah
 github.com/containers/buildah/internal
+github.com/containers/buildah/internal/mkcw
+github.com/containers/buildah/internal/mkcw/types
 github.com/containers/buildah/internal/parse
+github.com/containers/buildah/internal/tmpdir
 github.com/containers/buildah/internal/util
+github.com/containers/buildah/internal/volumes
 github.com/containers/buildah/pkg/blobcache
 github.com/containers/buildah/pkg/chrootuser
 github.com/containers/buildah/pkg/jail
@@ -122,10 +132,11 @@ github.com/containers/buildah/pkg/rusage
 github.com/containers/buildah/pkg/sshagent
 github.com/containers/buildah/pkg/util
 github.com/containers/buildah/util
-# github.com/containers/common v0.55.4
+# github.com/containers/common v0.56.0
 ## explicit; go 1.18
 github.com/containers/common/libimage
 github.com/containers/common/libimage/define
+github.com/containers/common/libimage/filter
 github.com/containers/common/libimage/manifests
 github.com/containers/common/libnetwork/cni
 github.com/containers/common/libnetwork/etchosts
@@ -139,10 +150,12 @@ github.com/containers/common/libnetwork/types
 github.com/containers/common/libnetwork/util
 github.com/containers/common/pkg/apparmor
 github.com/containers/common/pkg/apparmor/internal/supported
+github.com/containers/common/pkg/auth
 github.com/containers/common/pkg/capabilities
 github.com/containers/common/pkg/cgroups
 github.com/containers/common/pkg/cgroupv2
 github.com/containers/common/pkg/chown
+github.com/containers/common/pkg/completion
 github.com/containers/common/pkg/config
 github.com/containers/common/pkg/download
 github.com/containers/common/pkg/filters
@@ -246,6 +259,9 @@ github.com/containers/image/v5/version
 # github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01
 ## explicit
 github.com/containers/libtrust
+# github.com/containers/luksy v0.0.0-20230808154129-d2d74a56682f
+## explicit; go 1.20
+github.com/containers/luksy
 # github.com/containers/ocicrypt v1.1.8
 ## explicit; go 1.20
 github.com/containers/ocicrypt
@@ -353,7 +369,7 @@ github.com/containers/psgo/internal/dev
 github.com/containers/psgo/internal/host
 github.com/containers/psgo/internal/proc
 github.com/containers/psgo/internal/process
-# github.com/containers/storage v1.50.1
+# github.com/containers/storage v1.50.2
 ## explicit; go 1.19
 github.com/containers/storage
 github.com/containers/storage/drivers
@@ -577,7 +593,7 @@ github.com/hashicorp/go-multierror
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
-# github.com/jinzhu/copier v0.3.5
+# github.com/jinzhu/copier v0.4.0
 ## explicit; go 1.13
 github.com/jinzhu/copier
 # github.com/josharian/intern v1.0.0
@@ -717,7 +733,7 @@ github.com/ostreedev/ostree-go/pkg/otbuiltin
 # github.com/pkg/errors v0.9.1
 ## explicit
 github.com/pkg/errors
-# github.com/pkg/sftp v1.13.5
+# github.com/pkg/sftp v1.13.6
 ## explicit; go 1.15
 github.com/pkg/sftp
 github.com/pkg/sftp/internal/encoding/ssh/filexfer
@@ -827,6 +843,8 @@ go.opencensus.io/trace/internal
 go.opencensus.io/trace/tracestate
 # golang.org/x/crypto v0.13.0
 ## explicit; go 1.17
+golang.org/x/crypto/argon2
+golang.org/x/crypto/blake2b
 golang.org/x/crypto/blowfish
 golang.org/x/crypto/cast5
 golang.org/x/crypto/chacha20
@@ -844,6 +862,7 @@ golang.org/x/crypto/openpgp/errors
 golang.org/x/crypto/openpgp/packet
 golang.org/x/crypto/openpgp/s2k
 golang.org/x/crypto/pbkdf2
+golang.org/x/crypto/ripemd160
 golang.org/x/crypto/salsa20/salsa
 golang.org/x/crypto/scrypt
 golang.org/x/crypto/sha3
@@ -851,6 +870,8 @@ golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/agent
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/knownhosts
+golang.org/x/crypto/twofish
+golang.org/x/crypto/xts
 # golang.org/x/exp v0.0.0-20230817173708-d852ddb80c63
 ## explicit; go 1.20
 golang.org/x/exp/constraints
