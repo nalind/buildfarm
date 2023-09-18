@@ -7,7 +7,7 @@ require (
 	github.com/containers/common v0.55.4
 	github.com/containers/image/v5 v5.28.0
 	github.com/containers/podman/v4 v4.6.2
-	github.com/containers/storage v1.50.1
+	github.com/containers/storage v1.50.2
 	github.com/docker/go-units v0.5.0
 	github.com/fsouza/go-dockerclient v1.9.8
 	github.com/hashicorp/go-multierror v1.1.1
