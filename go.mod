@@ -3,7 +3,7 @@ module github.com/nalind/buildfarm
 go 1.20
 
 require (
-	github.com/containers/buildah v1.32.0
+	github.com/containers/buildah v1.32.1
 	github.com/containers/common v0.56.0
 	github.com/containers/image/v5 v5.28.0
 	github.com/containers/podman/v4 v4.7.1
