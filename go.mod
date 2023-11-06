@@ -6,7 +6,7 @@ require (
 	github.com/containers/buildah v1.32.1
 	github.com/containers/common v0.56.0
 	github.com/containers/image/v5 v5.28.0
-	github.com/containers/podman/v4 v4.7.1
+	github.com/containers/podman/v4 v4.7.2
 	github.com/containers/storage v1.50.2
 	github.com/docker/go-units v0.5.0
 	github.com/fsouza/go-dockerclient v1.10.0
