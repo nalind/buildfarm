@@ -6,7 +6,7 @@ require (
 	github.com/containers/buildah v1.33.2
 	github.com/containers/common v0.57.1
 	github.com/containers/image/v5 v5.29.0
-	github.com/containers/podman/v4 v4.8.1
+	github.com/containers/podman/v4 v4.8.3
 	github.com/containers/storage v1.51.0
 	github.com/docker/go-units v0.5.0
 	github.com/fsouza/go-dockerclient v1.10.0
@@ -137,13 +137,13 @@ require (
 	go.mongodb.org/mongo-driver v1.11.3 // indirect
 	go.mozilla.org/pkcs7 v0.0.0-20210826202110-33d05740a352 // indirect
 	go.opencensus.io v0.24.0 // indirect
-	golang.org/x/crypto v0.15.0 // indirect
+	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/mod v0.13.0 // indirect
 	golang.org/x/net v0.18.0 // indirect
 	golang.org/x/sync v0.5.0 // indirect
-	golang.org/x/sys v0.14.0 // indirect
-	golang.org/x/term v0.14.0 // indirect
+	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/term v0.15.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/tools v0.14.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230920204549-e6e6cdab5c13 // indirect
