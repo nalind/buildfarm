@@ -3,11 +3,11 @@ module github.com/nalind/buildfarm
 go 1.20
 
 require (
-	github.com/containers/buildah v1.33.2
+	github.com/containers/buildah v1.34.0
 	github.com/containers/common v0.57.2
 	github.com/containers/image/v5 v5.29.1
 	github.com/containers/podman/v4 v4.8.3
-	github.com/containers/storage v1.51.0
+	github.com/containers/storage v1.51.1-0.20231204015418-15c3cb7881e4
 	github.com/docker/go-units v0.5.0
 	github.com/fsouza/go-dockerclient v1.10.1
 	github.com/hashicorp/go-multierror v1.1.1
@@ -84,7 +84,7 @@ require (
 	github.com/jinzhu/copier v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.17.3 // indirect
+	github.com/klauspost/compress v1.17.4 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/letsencrypt/boulder v0.0.0-20230213213521-fdfea0d469b6 // indirect
@@ -96,7 +96,7 @@ require (
 	github.com/miekg/pkcs11 v1.1.1 // indirect
 	github.com/mistifyio/go-zfs/v3 v3.0.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/moby/buildkit v0.12.3 // indirect
+	github.com/moby/buildkit v0.12.4 // indirect
 	github.com/moby/patternmatcher v0.6.0 // indirect
 	github.com/moby/sys/mountinfo v0.7.1 // indirect
 	github.com/moby/sys/sequential v0.5.0 // indirect
@@ -111,7 +111,7 @@ require (
 	github.com/opencontainers/runtime-spec v1.1.1-0.20230922153023-c0e90434df2a // indirect
 	github.com/opencontainers/runtime-tools v0.9.1-0.20230914150019-408c51e934dc // indirect
 	github.com/opencontainers/selinux v1.11.0 // indirect
-	github.com/openshift/imagebuilder v1.2.6-0.20231110114814-35a50d57f722 // indirect
+	github.com/openshift/imagebuilder v1.2.6-0.20231127234745-ef2a5fe47510 // indirect
 	github.com/ostreedev/ostree-go v0.0.0-20210805093236-719684c64e4f // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkg/sftp v1.13.6 // indirect

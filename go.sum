@@ -240,8 +240,8 @@ github.com/containernetworking/plugins v0.8.6/go.mod h1:qnw5mN19D8fIwkqW7oHHYDHV
 github.com/containernetworking/plugins v0.9.1/go.mod h1:xP/idU2ldlzN6m4p5LmGiwRDjeJr6FLK6vuiUwoH7P8=
 github.com/containernetworking/plugins v1.3.0 h1:QVNXMT6XloyMUoO2wUOqWTC1hWFV62Q6mVDp5H1HnjM=
 github.com/containernetworking/plugins v1.3.0/go.mod h1:Pc2wcedTQQCVuROOOaLBPPxrEXqqXBFt3cZ+/yVg6l0=
-github.com/containers/buildah v1.33.2 h1:8xdFFP2txJ5lQP91MqYrs/cGhF4o8f46wzFgnrTDJBM=
-github.com/containers/buildah v1.33.2/go.mod h1:P1fI6kIw3d3ENk5eUJjkXeT9YFoG3uAAWglCk5BeuWc=
+github.com/containers/buildah v1.34.0 h1:xBH4wnPLSDufECZLVDKooX+Y+6qH4+2ILmfJFcsSV4I=
+github.com/containers/buildah v1.34.0/go.mod h1:8WaG0AzYnTfBJmNCR7i1STY52vaqjTlwAteK7FqtT5c=
 github.com/containers/common v0.57.2 h1:50Zp9VuXt2u5uNTKEc4aU2+PfWzFNAulD9JX43VihyI=
 github.com/containers/common v0.57.2/go.mod h1:ZG9ab1bEssX98ZBclWFIyzx4+MyUN8dXj1oSEugp7N0=
 github.com/containers/conmon v2.0.20+incompatible h1:YbCVSFSCqFjjVwHTPINGdMX1F6JXHGTUje2ZYobNrkg=
@@ -262,8 +262,8 @@ github.com/containers/podman/v4 v4.8.3/go.mod h1:ArI44imM/lS2u5XAXXtdehFT5cWPimz
 github.com/containers/psgo v1.8.0 h1:2loGekmGAxM9ir5OsXWEfGwFxorMPYnc6gEDsGFQvhY=
 github.com/containers/psgo v1.8.0/go.mod h1:T8ZxnX3Ur4RvnhxFJ7t8xJ1F48RhiZB4rSrOaR/qGHc=
 github.com/containers/storage v1.43.0/go.mod h1:uZ147thiIFGdVTjMmIw19knttQnUCl3y9zjreHrg11s=
-github.com/containers/storage v1.51.0 h1:AowbcpiWXzAjHosKz7MKvPEqpyX+ryZA/ZurytRrFNA=
-github.com/containers/storage v1.51.0/go.mod h1:ybl8a3j1PPtpyaEi/5A6TOFs+5TrEyObeKJzVtkUlfc=
+github.com/containers/storage v1.51.1-0.20231204015418-15c3cb7881e4 h1:dwGIPF0WNxygqTi1tdGfYSiysu0hSTpy5aaG1zGycVM=
+github.com/containers/storage v1.51.1-0.20231204015418-15c3cb7881e4/go.mod h1:pMhG1O3eMGlQKpuEuv7ves+K3BsK8/UJs8ctV5fEaoI=
 github.com/coreos/bbolt v1.3.2/go.mod h1:iRUV2dpdMOn7Bo10OQBFzIJO9kkE559Wcmn+qkEiiKk=
 github.com/coreos/etcd v3.3.10+incompatible/go.mod h1:uF7uidLiAD3TWHmW31ZFd/JWoc32PjwdhPthX9715RE=
 github.com/coreos/go-iptables v0.4.5/go.mod h1:/mVI274lEDI2ns62jHCDnCyBF9Iwsmekav8Dbxlm1MU=
@@ -626,8 +626,8 @@ github.com/klauspost/compress v1.11.13/go.mod h1:aoV0uJVorq1K+umq18yTdKaF57EivdY
 github.com/klauspost/compress v1.13.6/go.mod h1:/3/Vjq9QcHkK5uEr5lBEmyoZ1iFhe47etQ6QUkpK6sk=
 github.com/klauspost/compress v1.15.7/go.mod h1:PhcZ0MbTNciWF3rruxRgKxI5NkcHHrHUDtV4Yw2GlzU=
 github.com/klauspost/compress v1.15.9/go.mod h1:PhcZ0MbTNciWF3rruxRgKxI5NkcHHrHUDtV4Yw2GlzU=
-github.com/klauspost/compress v1.17.3 h1:qkRjuerhUU1EmXLYGkSH6EZL+vPSxIrYjLNAK4slzwA=
-github.com/klauspost/compress v1.17.3/go.mod h1:/dCuZOvVtNoHsyb+cuJD3itjs3NbnF6KH9zAO4BDxPM=
+github.com/klauspost/compress v1.17.4 h1:Ej5ixsIri7BrIjBkRZLTo6ghwrEtHFk7ijlczPW4fZ4=
+github.com/klauspost/compress v1.17.4/go.mod h1:/dCuZOvVtNoHsyb+cuJD3itjs3NbnF6KH9zAO4BDxPM=
 github.com/klauspost/pgzip v1.2.5/go.mod h1:Ch1tH69qFZu15pkjo5kYi6mth2Zzwzt50oCQKQE9RUs=
 github.com/klauspost/pgzip v1.2.6 h1:8RXeL5crjEUFnR2/Sn6GJNWtSQ3Dk8pq4CL3jvdDyjU=
 github.com/klauspost/pgzip v1.2.6/go.mod h1:Ch1tH69qFZu15pkjo5kYi6mth2Zzwzt50oCQKQE9RUs=
@@ -692,8 +692,8 @@ github.com/mitchellh/mapstructure v1.4.1/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RR
 github.com/mitchellh/mapstructure v1.5.0 h1:jeMsZIYE/09sWLaz43PL7Gy6RuMjD2eJVyuac5Z2hdY=
 github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=
 github.com/mitchellh/osext v0.0.0-20151018003038-5e2d6d41470f/go.mod h1:OkQIRizQZAeMln+1tSwduZz7+Af5oFlKirV/MSYes2A=
-github.com/moby/buildkit v0.12.3 h1:cFaPVnyC0PwAP5xHHfzdU5v9rgQrCi6HnGSg3WuFKp4=
-github.com/moby/buildkit v0.12.3/go.mod h1:adB4y0SxxX8trnrY+oEulb48ODLqPO6pKMF0ppGcCoI=
+github.com/moby/buildkit v0.12.4 h1:yKZDsObXLKarXqUx7YMnaB+TKv810bBhq0XLFWbkjT0=
+github.com/moby/buildkit v0.12.4/go.mod h1:XG74uz06nPWQpnxYwgCryrVidvor0+ElUxGosbZPQG4=
 github.com/moby/locker v1.0.1/go.mod h1:S7SDdo5zpBK84bzzVlKr2V0hz+7x9hWbYC/kq7oQppc=
 github.com/moby/patternmatcher v0.6.0 h1:GmP9lR19aU5GqSSFko+5pRqHi+Ohk1O69aFiKkVGiPk=
 github.com/moby/patternmatcher v0.6.0/go.mod h1:hDPoyOpDY7OrrMDLaYoY3hf52gNCR/YOUYxkhApJIxc=
@@ -741,10 +741,10 @@ github.com/onsi/ginkgo v1.10.3/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+
 github.com/onsi/ginkgo v1.11.0/go.mod h1:lLunBs/Ym6LB5Z9jYTR76FiuTmxDTDusOGeTQH+WWjE=
 github.com/onsi/ginkgo v1.12.0/go.mod h1:oUhWkIvk5aDxtKvDDuw8gItl8pKl42LzjC9KZE0HfGg=
 github.com/onsi/ginkgo v1.12.1/go.mod h1:zj2OWP4+oCPe1qIXoGWkgMRwljMUYCdkwsT2108oapk=
+github.com/onsi/ginkgo v1.16.4 h1:29JGrr5oVBm5ulCWet69zQkzWipVXIol6ygQUe/EzNc=
 github.com/onsi/ginkgo v1.16.4/go.mod h1:dX+/inL/fNMqNlz0e9LfyB9TswhZpCVdJM/Z6Vvnwo0=
-github.com/onsi/ginkgo v1.16.5 h1:8xi0RTUf59SOSfEtZMvwTvXYMzG4gV23XVHOZiXNtnE=
 github.com/onsi/ginkgo/v2 v2.1.3/go.mod h1:vw5CSIxN1JObi/U8gcbwft7ZxR2dgaR70JSE3/PpL4c=
-github.com/onsi/ginkgo/v2 v2.13.1 h1:LNGfMbR2OVGBfXjvRZIZ2YCTQdGKtPLvuI1rMCCj3OU=
+github.com/onsi/ginkgo/v2 v2.13.2 h1:Bi2gGVkfn6gQcjNjZJVO8Gf0FHzMPf2phUei9tejVMs=
 github.com/onsi/gomega v0.0.0-20151007035656-2152b45fa28a/go.mod h1:C1qb7wdrVGGVU+Z6iS04AVkA3Q65CEZX59MT0QO5uiA=
 github.com/onsi/gomega v0.0.0-20170829124025-dcabb60a477c/go.mod h1:C1qb7wdrVGGVU+Z6iS04AVkA3Q65CEZX59MT0QO5uiA=
 github.com/onsi/gomega v1.5.0/go.mod h1:ex+gbHU/CVuBBDIJjb2X0qEXbFg53c61hWP/1CpauHY=
@@ -784,8 +784,8 @@ github.com/opencontainers/selinux v1.8.2/go.mod h1:MUIHuUEvKB1wtJjQdOyYRgOnLD2xA
 github.com/opencontainers/selinux v1.10.1/go.mod h1:2i0OySw99QjzBBQByd1Gr9gSjvuho1lHsJxIJ3gGbJI=
 github.com/opencontainers/selinux v1.11.0 h1:+5Zbo97w3Lbmb3PeqQtpmTkMwsW5nRI3YaLpt7tQ7oU=
 github.com/opencontainers/selinux v1.11.0/go.mod h1:E5dMC3VPuVvVHDYmi78qvhJp8+M586T4DlDRYpFkyec=
-github.com/openshift/imagebuilder v1.2.6-0.20231110114814-35a50d57f722 h1:vhEmg+NeucmSYnT2j9ukkZLrR/ZOFUuUiGhxlBAlW8U=
-github.com/openshift/imagebuilder v1.2.6-0.20231110114814-35a50d57f722/go.mod h1:+rSifDZnwJPSW2uYHl7ePSVxq4DEu1VlhNR1uIz/Lm4=
+github.com/openshift/imagebuilder v1.2.6-0.20231127234745-ef2a5fe47510 h1:ILAESc7vHTVNKctTiR10XC+vACPlR4NbS6570G6QQmY=
+github.com/openshift/imagebuilder v1.2.6-0.20231127234745-ef2a5fe47510/go.mod h1:nOaQJMj7VZgdqATqES4GxZX/p6gwK2r7bpE3Ry63+jM=
 github.com/ostreedev/ostree-go v0.0.0-20210805093236-719684c64e4f h1:/UDgs8FGMqwnHagNDPGOlts35QkhAZ8by3DR7nMih7M=
 github.com/ostreedev/ostree-go v0.0.0-20210805093236-719684c64e4f/go.mod h1:J6OG6YJVEWopen4avK3VNQSnALmmjvniMmni/YFYAwc=
 github.com/otiai10/copy v1.14.0 h1:dCI/t1iTdYGtkvCuBG2BgR6KZa83PTclw4U5n2wAllU=
