@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package generate
 
 import (
@@ -17,10 +14,8 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
@@ -36,15 +31,6 @@ func setProcOpts(s *specgen.SpecGenerator, g *generate.Generator) {
 	}
 }
 
-func setDevOptsReadOnly(g *generate.Generator) {
-	for i := range g.Config.Mounts {
-		if g.Config.Mounts[i].Destination == "/dev" {
-			g.Config.Mounts[i].Options = append(g.Config.Mounts[i].Options, "ro")
-			return
-		}
-	}
-}
-
 // canMountSys is a best-effort heuristic to detect whether mounting a new sysfs is permitted in the container
 func canMountSys(isRootless, isNewUserns bool, s *specgen.SpecGenerator) bool {
 	if s.NetNS.IsHost() && (isRootless || isNewUserns) {
@@ -52,7 +38,7 @@ func canMountSys(isRootless, isNewUserns bool, s *specgen.SpecGenerator) bool {
 	}
 	if isNewUserns {
 		switch s.NetNS.NSMode {
-		case specgen.Slirp, specgen.Pasta, specgen.Private, specgen.NoNetwork, specgen.Bridge:
+		case specgen.Slirp, specgen.Private, specgen.NoNetwork, specgen.Bridge:
 			return true
 		default:
 			return false
@@ -61,7 +47,7 @@ func canMountSys(isRootless, isNewUserns bool, s *specgen.SpecGenerator) bool {
 	return true
 }
 
-func getCgroupPermissions(unmask []string) string {
+func getCgroupPermissons(unmask []string) string {
 	ro := "ro"
 	rw := "rw"
 	cgroup := "/sys/fs/cgroup"
@@ -71,7 +57,7 @@ func getCgroupPermissions(unmask []string) string {
 		return ro
 	}
 
-	if len(unmask) != 0 && unmask[0] == "ALL" {
+	if unmask != nil && unmask[0] == "ALL" {
 		return rw
 	}
 
@@ -85,7 +71,7 @@ func getCgroupPermissions(unmask []string) string {
 
 // SpecGenToOCI returns the base configuration for the container.
 func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runtime, rtc *config.Config, newImage *libimage.Image, mounts []spec.Mount, pod *libpod.Pod, finalCmd []string, compatibleOptions *libpod.InfraInherit) (*spec.Spec, error) {
-	cgroupPerm := getCgroupPermissions(s.Unmask)
+	cgroupPerm := getCgroupPermissons(s.Unmask)
 
 	g, err := generate.New("linux")
 	if err != nil {
@@ -97,7 +83,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	addCgroup := true
 
 	isRootless := rootless.IsRootless()
-	isNewUserns := s.UserNS.IsContainer() || s.UserNS.IsPath() || s.UserNS.IsPrivate() || s.UserNS.IsPod() || s.UserNS.IsAuto()
+	isNewUserns := s.UserNS.IsContainer() || s.UserNS.IsPath() || s.UserNS.IsPrivate()
 
 	canMountSys := canMountSys(isRootless, isNewUserns, s)
 
@@ -121,20 +107,11 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		}
 		sysMnt := spec.Mount{
 			Destination: "/sys",
-			Type:        define.TypeBind,
+			Type:        "bind", // should we use a constant for this, like createconfig?
 			Source:      "/sys",
 			Options:     []string{"rprivate", "nosuid", "noexec", "nodev", r, "rbind"},
 		}
 		g.AddMount(sysMnt)
-		g.RemoveMount("/sys/fs/cgroup")
-
-		sysFsCgroupMnt := spec.Mount{
-			Destination: "/sys/fs/cgroup",
-			Type:        "cgroup",
-			Source:      "/sys/fs/cgroup",
-			Options:     []string{"rprivate", "nosuid", "noexec", "nodev", r},
-		}
-		g.AddMount(sysFsCgroupMnt)
 		if !s.Privileged && isRootless {
 			g.AddLinuxMaskedPaths("/sys/kernel")
 		}
@@ -166,8 +143,8 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.RemoveMount("/dev/pts")
 		devPts := spec.Mount{
 			Destination: "/dev/pts",
-			Type:        define.TypeDevpts,
-			Source:      define.TypeDevpts,
+			Type:        "devpts",
+			Source:      "devpts",
 			Options:     []string{"rprivate", "nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620"},
 		}
 		g.AddMount(devPts)
@@ -179,9 +156,9 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.RemoveMount("/dev/mqueue")
 		devMqueue := spec.Mount{
 			Destination: "/dev/mqueue",
-			Type:        define.TypeBind, // constant ?
+			Type:        "bind", // constant ?
 			Source:      "/dev/mqueue",
-			Options:     []string{define.TypeBind, "nosuid", "noexec", "nodev"},
+			Options:     []string{"bind", "nosuid", "noexec", "nodev"},
 		}
 		g.AddMount(devMqueue)
 	}
@@ -218,12 +195,6 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.AddAnnotation(key, val)
 	}
 
-	if s.IntelRdt != nil {
-		if s.IntelRdt.ClosID != "" {
-			g.SetLinuxIntelRdtClosID(s.IntelRdt.ClosID)
-		}
-	}
-
 	if s.ResourceLimits != nil {
 		out, err := json.Marshal(s.ResourceLimits)
 		if err != nil {
@@ -256,7 +227,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	if !s.Privileged {
 		// add default devices from containers.conf
-		for _, device := range rtc.Containers.Devices.Get() {
+		for _, device := range rtc.Containers.Devices {
 			if err = DevicesFromPath(&g, device); err != nil {
 				return nil, err
 			}
@@ -276,10 +247,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	s.HostDeviceList = userDevices
 
 	// set the devices cgroup when not running in a user namespace
-	if isRootless && len(s.DeviceCgroupRule) > 0 {
-		return nil, fmt.Errorf("device cgroup rules are not supported in rootless mode or in a user namespace")
-	}
-	if !isRootless && !s.Privileged {
+	if !inUserNS && !s.Privileged {
 		for _, dev := range s.DeviceCgroupRule {
 			g.AddLinuxResourcesDevice(true, dev.Type, dev.Major, dev.Minor, dev.Access)
 		}
@@ -318,6 +286,8 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	if s.Remove {
 		configSpec.Annotations[define.InspectAnnotationAutoremove] = define.InspectResponseTrue
+	} else {
+		configSpec.Annotations[define.InspectAnnotationAutoremove] = define.InspectResponseFalse
 	}
 
 	if len(s.VolumesFrom) > 0 {
@@ -326,20 +296,20 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	if s.Privileged {
 		configSpec.Annotations[define.InspectAnnotationPrivileged] = define.InspectResponseTrue
+	} else {
+		configSpec.Annotations[define.InspectAnnotationPrivileged] = define.InspectResponseFalse
 	}
 
 	if s.Init {
 		configSpec.Annotations[define.InspectAnnotationInit] = define.InspectResponseTrue
+	} else {
+		configSpec.Annotations[define.InspectAnnotationInit] = define.InspectResponseFalse
 	}
 
 	if s.OOMScoreAdj != nil {
 		g.SetProcessOOMScoreAdj(*s.OOMScoreAdj)
 	}
-
 	setProcOpts(s, &g)
-	if s.ReadOnlyFilesystem && !s.ReadWriteTmpfs {
-		setDevOptsReadOnly(&g)
-	}
 
 	return configSpec, nil
 }
@@ -358,38 +328,4 @@ func WeightDevices(wtDevices map[string]spec.LinuxWeightDevice) ([]spec.LinuxWei
 		devs = append(devs, *dev)
 	}
 	return devs, nil
-}
-
-// subNegativeOne translates Hard or soft limits of -1 to the current
-// processes Max limit
-func subNegativeOne(u spec.POSIXRlimit) spec.POSIXRlimit {
-	if !rootless.IsRootless() ||
-		(int64(u.Hard) != -1 && int64(u.Soft) != -1) {
-		return u
-	}
-
-	ul, err := units.ParseUlimit(fmt.Sprintf("%s=%d:%d", u.Type, int64(u.Soft), int64(u.Hard)))
-	if err != nil {
-		logrus.Warnf("Failed to check %s ulimit %q", u.Type, err)
-		return u
-	}
-	rl, err := ul.GetRlimit()
-	if err != nil {
-		logrus.Warnf("Failed to check %s ulimit %q", u.Type, err)
-		return u
-	}
-
-	var rlimit unix.Rlimit
-
-	if err := unix.Getrlimit(rl.Type, &rlimit); err != nil {
-		logrus.Warnf("Failed to return RLIMIT_NOFILE ulimit %q", err)
-		return u
-	}
-	if int64(u.Hard) == -1 {
-		u.Hard = rlimit.Max
-	}
-	if int64(u.Soft) == -1 {
-		u.Soft = rlimit.Max
-	}
-	return u
 }

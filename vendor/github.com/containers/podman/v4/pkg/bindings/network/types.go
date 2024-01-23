@@ -4,9 +4,8 @@ import (
 	"net"
 )
 
-// CreateOptions are optional options for creating networks
-//
 //go:generate go run ../generator/generator.go CreateOptions
+// CreateOptions are optional options for creating networks
 type CreateOptions struct {
 	// DisableDNS turns off use of DNSMasq for name resolution
 	// on the network
@@ -34,70 +33,47 @@ type CreateOptions struct {
 	Name *string
 }
 
-// InspectOptions are optional options for inspecting networks
-//
 //go:generate go run ../generator/generator.go InspectOptions
+// InspectOptions are optional options for inspecting networks
 type InspectOptions struct {
 }
 
-// RemoveOptions are optional options for inspecting networks
-//
 //go:generate go run ../generator/generator.go RemoveOptions
+// RemoveOptions are optional options for inspecting networks
 type RemoveOptions struct {
 	// Force removes the network even if it is being used
 	Force   *bool
 	Timeout *uint
 }
 
-// ListOptions are optional options for listing networks
-//
 //go:generate go run ../generator/generator.go ListOptions
+// ListOptions are optional options for listing networks
 type ListOptions struct {
 	// Filters are applied to the list of networks to be more
 	// specific on the output
 	Filters map[string][]string
 }
 
-// NetworkUpdateOptions describes options to update a network
-//
-//go:generate go run ../generator/generator.go UpdateOptions
-type UpdateOptions struct {
-	AddDNSServers    []string `json:"adddnsservers"`
-	RemoveDNSServers []string `json:"removednsservers"`
-}
-
+//go:generate go run ../generator/generator.go DisconnectOptions
 // DisconnectOptions are optional options for disconnecting
 // containers from a network
-//
-//go:generate go run ../generator/generator.go DisconnectOptions
 type DisconnectOptions struct {
 	// Force indicates to remove the container from
 	// the network forcibly
 	Force *bool
 }
 
+//go:generate go run ../generator/generator.go ExistsOptions
 // ExistsOptions are optional options for checking
 // if a network exists
-//
-//go:generate go run ../generator/generator.go ExistsOptions
 type ExistsOptions struct {
 }
 
-// PruneOptions are optional options for removing unused
-// networks
-//
 //go:generate go run ../generator/generator.go PruneOptions
+// PruneOptions are optional options for removing unused
+// CNI networks
 type PruneOptions struct {
 	// Filters are applied to the prune of networks to be more
 	// specific on choosing
 	Filters map[string][]string
-}
-
-// ExtraCreateOptions are optional additional configuration flags for creating Networks
-// that are not part of the network configuration
-//
-//go:generate go run ../generator/generator.go ExtraCreateOptions
-type ExtraCreateOptions struct {
-	// IgnoreIfExists if true, do not fail if the network already exists
-	IgnoreIfExists *bool `schema:"ignoreIfExists"`
 }

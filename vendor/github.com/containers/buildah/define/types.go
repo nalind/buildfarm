@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
+	"io/ioutil"
 	"net/http"
 	urlpkg "net/url"
 	"os"
@@ -28,8 +28,9 @@ const (
 	// Package is the name of this package, used in help output and to
 	// identify working containers.
 	Package = "buildah"
-	// Version for the Package. Also used by .packit.sh for Packit builds.
-	Version = "1.33.2"
+	// Version for the Package.  Bump version in contrib/rpm/buildah.spec
+	// too.
+	Version = "1.27.3"
 
 	// DefaultRuntime if containers.conf fails.
 	DefaultRuntime = "runc"
@@ -47,19 +48,11 @@ const (
 	OCI = "oci"
 	// DOCKER used to define the "docker" image format
 	DOCKER = "docker"
-
-	// SEV is a known trusted execution environment type: AMD-SEV (secure encrypted virtualization using encrypted state, requires epyc 1000 "naples")
-	SEV TeeType = "sev"
-	// SNP is a known trusted execution environment type: AMD-SNP (SEV secure nested pages) (requires epyc 3000 "milan")
-	SNP TeeType = "snp"
 )
 
-// TeeType is a supported trusted execution environment type.
-type TeeType string
-
 var (
-	// Deprecated: DefaultCapabilities values should be retrieved from
-	// github.com/containers/common/pkg/config
+	// DefaultCapabilities is the list of capabilities which we grant by
+	// default to containers which are running under UID 0.
 	DefaultCapabilities = []string{
 		"CAP_AUDIT_WRITE",
 		"CAP_CHOWN",
@@ -75,8 +68,8 @@ var (
 		"CAP_SETUID",
 		"CAP_SYS_CHROOT",
 	}
-	// Deprecated: DefaultNetworkSysctl values should be retrieved from
-	// github.com/containers/common/pkg/config
+	// DefaultNetworkSysctl is the list of Kernel parameters which we
+	// grant by default to containers which are running under UID 0.
 	DefaultNetworkSysctl = map[string]string{
 		"net.ipv4.ping_group_range": "0 0",
 	}
@@ -113,23 +106,6 @@ type BuildOutputOption struct {
 	IsStdout bool
 }
 
-// ConfidentialWorkloadOptions encapsulates options which control whether or not
-// we output an image whose rootfs contains a LUKS-compatibly-encrypted disk image
-// instead of the usual rootfs contents.
-type ConfidentialWorkloadOptions struct {
-	Convert                  bool
-	AttestationURL           string
-	CPUs                     int
-	Memory                   int
-	TempDir                  string
-	TeeType                  TeeType
-	IgnoreAttestationErrors  bool
-	WorkloadID               string
-	DiskEncryptionPassphrase string
-	Slop                     string
-	FirmwareLibrary          string
-}
-
 // TempDirForURL checks if the passed-in string looks like a URL or -.  If it is,
 // TempDirForURL creates a temporary directory, arranges for its contents to be
 // the contents of that URL, and returns the temporary directory's path, along
@@ -145,13 +121,13 @@ func TempDirForURL(dir, prefix, url string) (name string, subdir string, err err
 		url != "-" {
 		return "", "", nil
 	}
-	name, err = os.MkdirTemp(dir, prefix)
+	name, err = ioutil.TempDir(dir, prefix)
 	if err != nil {
-		return "", "", fmt.Errorf("creating temporary directory for %q: %w", url, err)
+		return "", "", fmt.Errorf("error creating temporary directory for %q: %w", url, err)
 	}
 	urlParsed, err := urlpkg.Parse(url)
 	if err != nil {
-		return "", "", fmt.Errorf("parsing url %q: %w", url, err)
+		return "", "", fmt.Errorf("error parsing url %q: %w", url, err)
 	}
 	if strings.HasPrefix(url, "git://") || strings.HasSuffix(urlParsed.Path, ".git") {
 		combinedOutput, gitSubDir, err := cloneToDirectory(url, name)
@@ -279,7 +255,7 @@ func downloadToDirectory(url, dir string) error {
 			return err
 		}
 		defer resp1.Body.Close()
-		body, err := io.ReadAll(resp1.Body)
+		body, err := ioutil.ReadAll(resp1.Body)
 		if err != nil {
 			return err
 		}
@@ -295,7 +271,7 @@ func downloadToDirectory(url, dir string) error {
 func stdinToDirectory(dir string) error {
 	logrus.Debugf("extracting stdin to %q", dir)
 	r := bufio.NewReader(os.Stdin)
-	b, err := io.ReadAll(r)
+	b, err := ioutil.ReadAll(r)
 	if err != nil {
 		return fmt.Errorf("failed to read from stdin: %w", err)
 	}

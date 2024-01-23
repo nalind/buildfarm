@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/blang/semver/v4"
 	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
@@ -16,7 +15,7 @@ var (
 
 func handleError(data []byte, unmarshalErrorInto interface{}) error {
 	if err := json.Unmarshal(data, unmarshalErrorInto); err != nil {
-		return fmt.Errorf("unmarshalling error into %#v, data %q: %w", unmarshalErrorInto, string(data), err)
+		return err
 	}
 	return unmarshalErrorInto.(error)
 }
@@ -36,10 +35,7 @@ func (h APIResponse) ProcessWithError(unmarshalInto interface{}, unmarshalErrorI
 	}
 	if h.IsSuccess() || h.IsRedirection() {
 		if unmarshalInto != nil {
-			if err := json.Unmarshal(data, unmarshalInto); err != nil {
-				return fmt.Errorf("unmarshalling into %#v, data %q: %w", unmarshalInto, string(data), err)
-			}
-			return nil
+			return json.Unmarshal(data, unmarshalInto)
 		}
 		return nil
 	}
@@ -61,27 +57,4 @@ func CheckResponseCode(inError error) (int, error) {
 	default:
 		return -1, errors.New("is not type ErrorModel")
 	}
-}
-
-type APIVersionError struct {
-	endpoint        string
-	serverVersion   *semver.Version
-	requiredVersion string
-}
-
-// NewAPIVersionError create bindings error when the endpoint on the server is not supported
-// because the version is to old.
-//   - endpoint is the name fo the endpoint (e.g. /containers/json)
-//   - version is the server API version
-//   - requiredVersion is the server version need to use said endpoint
-func NewAPIVersionError(endpoint string, version *semver.Version, requiredVersion string) *APIVersionError {
-	return &APIVersionError{
-		endpoint:        endpoint,
-		serverVersion:   version,
-		requiredVersion: requiredVersion,
-	}
-}
-
-func (e *APIVersionError) Error() string {
-	return fmt.Sprintf("API server version is %s, need at least %s to call %s", e.serverVersion.String(), e.requiredVersion, e.endpoint)
 }

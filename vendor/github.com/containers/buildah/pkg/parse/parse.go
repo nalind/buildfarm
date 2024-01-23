@@ -16,19 +16,14 @@ import (
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/containers/buildah/define"
-	mkcwtypes "github.com/containers/buildah/internal/mkcw/types"
 	internalParse "github.com/containers/buildah/internal/parse"
-	"github.com/containers/buildah/internal/tmpdir"
 	"github.com/containers/buildah/pkg/sshagent"
-	"github.com/containers/common/pkg/auth"
-	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/unshare"
 	storageTypes "github.com/containers/storage/types"
-	securejoin "github.com/cyphar/filepath-securejoin"
 	units "github.com/docker/go-units"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/openshift/imagebuilder"
@@ -40,34 +35,30 @@ import (
 
 const (
 	// SeccompDefaultPath defines the default seccomp path
-	SeccompDefaultPath = config.SeccompDefaultPath
+	SeccompDefaultPath = "/usr/share/containers/seccomp.json"
 	// SeccompOverridePath if this exists it overrides the default seccomp path
-	SeccompOverridePath = config.SeccompOverridePath
+	SeccompOverridePath = "/etc/crio/seccomp.json"
 	// TypeBind is the type for mounting host dir
 	TypeBind = "bind"
 	// TypeTmpfs is the type for mounting tmpfs
 	TypeTmpfs = "tmpfs"
 	// TypeCache is the type for mounting a common persistent cache from host
 	TypeCache = "cache"
-	// mount=type=cache must create a persistent directory on host so it's available for all consecutive builds.
+	// mount=type=cache must create a persistent directory on host so its available for all consecutive builds.
 	// Lifecycle of following directory will be inherited from how host machine treats temporary directory
 	BuildahCacheDir = "buildah-cache"
 )
 
-// RepoNamesToNamedReferences parse the raw string to Named reference
-func RepoNamesToNamedReferences(destList []string) ([]reference.Named, error) {
-	var result []reference.Named
-	for _, dest := range destList {
-		named, err := reference.ParseNormalizedNamed(dest)
-		if err != nil {
-			return nil, fmt.Errorf("invalid repo %q: must contain registry and repository: %w", dest, err)
-		}
-		if !reference.IsNameOnly(named) {
-			return nil, fmt.Errorf("repository must contain neither a tag nor digest: %v", named)
-		}
-		result = append(result, named)
+// RepoNameToNamedReference parse the raw string to Named reference
+func RepoNameToNamedReference(dest string) (reference.Named, error) {
+	named, err := reference.ParseNormalizedNamed(dest)
+	if err != nil {
+		return nil, fmt.Errorf("invalid repo %q: must contain registry and repository: %w", dest, err)
 	}
-	return result, nil
+	if !reference.IsNameOnly(named) {
+		return nil, fmt.Errorf("repository must contain neither a tag nor digest: %v", named)
+	}
+	return named, nil
 }
 
 // CommonBuildOptions parses the build options from the bud cli
@@ -104,7 +95,6 @@ func CommonBuildOptionsFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name 
 		}
 	}
 
-	noHostname, _ := flags.GetBool("no-hostname")
 	noHosts, _ := flags.GetBool("no-hosts")
 
 	addHost, _ := flags.GetStringSlice("add-host")
@@ -153,6 +143,9 @@ func CommonBuildOptionsFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name 
 		return nil, fmt.Errorf("invalid --shm-size: %w", err)
 	}
 	volumes, _ := flags.GetStringArray("volume")
+	if err := Volumes(volumes); err != nil {
+		return nil, err
+	}
 	cpuPeriod, _ := flags.GetUint64("cpu-period")
 	cpuQuota, _ := flags.GetInt64("cpu-quota")
 	cpuShares, _ := flags.GetUint64("cpu-shares")
@@ -184,7 +177,6 @@ func CommonBuildOptionsFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name 
 		IdentityLabel: types.NewOptionalBool(identityLabel),
 		Memory:        memoryLimit,
 		MemorySwap:    memorySwap,
-		NoHostname:    noHostname,
 		NoHosts:       noHosts,
 		OmitHistory:   omitHistory,
 		ShmSize:       findFlagFunc("shm-size").Value.String(),
@@ -229,14 +221,13 @@ func GetAdditionalBuildContext(value string) (define.AdditionalBuildContext, err
 func parseSecurityOpts(securityOpts []string, commonOpts *define.CommonBuildOptions) error {
 	for _, opt := range securityOpts {
 		if opt == "no-new-privileges" {
-			commonOpts.NoNewPrivileges = true
-			continue
+			return errors.New("no-new-privileges is not supported")
 		}
-
 		con := strings.SplitN(opt, "=", 2)
 		if len(con) != 2 {
 			return fmt.Errorf("invalid --security-opt name=value pair: %q", opt)
 		}
+
 		switch con[0] {
 		case "label":
 			commonOpts.LabelOpts = append(commonOpts.LabelOpts, con[1])
@@ -354,15 +345,6 @@ func SystemContextFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name strin
 		ctx.OCIInsecureSkipTLSVerify = !tlsVerify
 		ctx.DockerDaemonInsecureSkipTLSVerify = !tlsVerify
 	}
-	insecure, err := flags.GetBool("insecure")
-	if err == nil && findFlagFunc("insecure").Changed {
-		if ctx.DockerInsecureSkipTLSVerify != types.OptionalBoolUndefined {
-			return nil, errors.New("--insecure may not be used with --tls-verify")
-		}
-		ctx.DockerInsecureSkipTLSVerify = types.NewOptionalBool(insecure)
-		ctx.OCIInsecureSkipTLSVerify = insecure
-		ctx.DockerDaemonInsecureSkipTLSVerify = insecure
-	}
 	disableCompression, err := flags.GetBool("disable-compression")
 	if err == nil {
 		if disableCompression {
@@ -448,13 +430,9 @@ func SystemContextFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name strin
 
 func getAuthFile(authfile string) string {
 	if authfile != "" {
-		absAuthfile, err := filepath.Abs(authfile)
-		if err == nil {
-			return absAuthfile
-		}
-		logrus.Warnf("ignoring passed-in auth file path, evaluating it: %v", err)
+		return authfile
 	}
-	return auth.GetDefaultAuthFile()
+	return os.Getenv("REGISTRY_AUTH_FILE")
 }
 
 // PlatformFromOptions parses the operating system (os) and architecture (arch)
@@ -511,6 +489,8 @@ func PlatformsFromOptions(c *cobra.Command) (platforms []struct{ OS, Arch, Varia
 	return platforms, nil
 }
 
+const platformSep = "/"
+
 // DefaultPlatform returns the standard platform for the current system
 func DefaultPlatform() string {
 	return platforms.DefaultString()
@@ -519,15 +499,21 @@ func DefaultPlatform() string {
 // Platform separates the platform string into os, arch and variant,
 // accepting any of $arch, $os/$arch, or $os/$arch/$variant.
 func Platform(platform string) (os, arch, variant string, err error) {
-	platform = strings.Trim(platform, "/")
-	if platform == "local" || platform == "" {
-		return Platform(DefaultPlatform())
+	split := strings.Split(platform, platformSep)
+	switch len(split) {
+	case 3:
+		variant = split[2]
+		fallthrough
+	case 2:
+		arch = split[1]
+		os = split[0]
+		return
+	case 1:
+		if platform == "local" {
+			return Platform(DefaultPlatform())
+		}
 	}
-	platformSpec, err := platforms.Parse(platform)
-	if err != nil {
-		return "", "", "", fmt.Errorf("invalid platform syntax for --platform=%q: %w", platform, err)
-	}
-	return platformSpec.OS, platformSpec.Architecture, platformSpec.Variant, nil
+	return "", "", "", fmt.Errorf("invalid platform syntax for %q (use OS/ARCH[/VARIANT][,...])", platform)
 }
 
 func parseCreds(creds string) (string, string) {
@@ -632,81 +618,6 @@ func GetBuildOutput(buildOutput string) (define.BuildOutputOption, error) {
 	}
 
 	return define.BuildOutputOption{Path: path, IsDir: isDir, IsStdout: isStdout}, nil
-}
-
-// TeeType parses a string value and returns a TeeType
-func TeeType(teeType string) define.TeeType {
-	return define.TeeType(strings.ToLower(teeType))
-}
-
-// GetConfidentialWorkloadOptions parses a confidential workload settings
-// argument, which controls both whether or not we produce an image that
-// expects to be run using krun, and how we handle things like encrypting
-// the disk image that the container image will contain.
-func GetConfidentialWorkloadOptions(arg string) (define.ConfidentialWorkloadOptions, error) {
-	options := define.ConfidentialWorkloadOptions{
-		TempDir: GetTempDir(),
-	}
-	defaults := options
-	for _, option := range strings.Split(arg, ",") {
-		var err error
-		switch {
-		case strings.HasPrefix(option, "type="):
-			options.TeeType = TeeType(strings.TrimPrefix(option, "type="))
-			switch options.TeeType {
-			case define.SEV, define.SNP, mkcwtypes.SEV_NO_ES:
-			default:
-				return options, fmt.Errorf("parsing type= value %q: unrecognized value", options.TeeType)
-			}
-		case strings.HasPrefix(option, "attestation_url="), strings.HasPrefix(option, "attestation-url="):
-			options.Convert = true
-			options.AttestationURL = strings.TrimPrefix(option, "attestation_url=")
-			if options.AttestationURL == option {
-				options.AttestationURL = strings.TrimPrefix(option, "attestation-url=")
-			}
-		case strings.HasPrefix(option, "passphrase="), strings.HasPrefix(option, "passphrase="):
-			options.Convert = true
-			options.DiskEncryptionPassphrase = strings.TrimPrefix(option, "passphrase=")
-		case strings.HasPrefix(option, "workload_id="), strings.HasPrefix(option, "workload-id="):
-			options.WorkloadID = strings.TrimPrefix(option, "workload_id=")
-			if options.WorkloadID == option {
-				options.WorkloadID = strings.TrimPrefix(option, "workload-id=")
-			}
-		case strings.HasPrefix(option, "cpus="):
-			options.CPUs, err = strconv.Atoi(strings.TrimPrefix(option, "cpus="))
-			if err != nil {
-				return options, fmt.Errorf("parsing cpus= value %q: %w", strings.TrimPrefix(option, "cpus="), err)
-			}
-		case strings.HasPrefix(option, "memory="):
-			options.Memory, err = strconv.Atoi(strings.TrimPrefix(option, "memory="))
-			if err != nil {
-				return options, fmt.Errorf("parsing memory= value %q: %w", strings.TrimPrefix(option, "memorys"), err)
-			}
-		case option == "ignore_attestation_errors", option == "ignore-attestation-errors":
-			options.IgnoreAttestationErrors = true
-		case strings.HasPrefix(option, "ignore_attestation_errors="), strings.HasPrefix(option, "ignore-attestation-errors="):
-			val := strings.TrimPrefix(option, "ignore_attestation_errors=")
-			if val == option {
-				val = strings.TrimPrefix(option, "ignore-attestation-errors=")
-			}
-			options.IgnoreAttestationErrors = val == "true" || val == "yes" || val == "on" || val == "1"
-		case strings.HasPrefix(option, "firmware-library="), strings.HasPrefix(option, "firmware_library="):
-			val := strings.TrimPrefix(option, "firmware-library=")
-			if val == option {
-				val = strings.TrimPrefix(option, "firmware_library=")
-			}
-			options.FirmwareLibrary = val
-		case strings.HasPrefix(option, "slop="):
-			options.Slop = strings.TrimPrefix(option, "slop=")
-		default:
-			knownOptions := []string{"type", "attestation_url", "passphrase", "workload_id", "cpus", "memory", "firmware_library", "slop"}
-			return options, fmt.Errorf("expected one or more of %q as arguments for --cw, not %q", knownOptions, option)
-		}
-	}
-	if options != defaults && !options.Convert {
-		return options, fmt.Errorf("--cw arguments missing one or more of (%q, %q)", "passphrase", "attestation_url")
-	}
-	return options, nil
 }
 
 // IDMappingOptions parses the build options related to user namespaces and ID mapping.
@@ -891,15 +802,15 @@ func parseIDMap(spec []string) (m [][3]uint32, err error) {
 		for len(args) >= 3 {
 			cid, err := strconv.ParseUint(args[0], 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("parsing container ID %q from mapping %q as a number: %w", args[0], s, err)
+				return nil, fmt.Errorf("error parsing container ID %q from mapping %q as a number: %w", args[0], s, err)
 			}
 			hostid, err := strconv.ParseUint(args[1], 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("parsing host ID %q from mapping %q as a number: %w", args[1], s, err)
+				return nil, fmt.Errorf("error parsing host ID %q from mapping %q as a number: %w", args[1], s, err)
 			}
 			size, err := strconv.ParseUint(args[2], 10, 32)
 			if err != nil {
-				return nil, fmt.Errorf("parsing %q from mapping %q as a number: %w", args[2], s, err)
+				return nil, fmt.Errorf("error parsing %q from mapping %q as a number: %w", args[2], s, err)
 			}
 			m = append(m, [3]uint32{uint32(cid), uint32(hostid), uint32(size)})
 			args = args[3:]
@@ -1007,11 +918,10 @@ func IsolationOption(isolation string) (define.Isolation, error) {
 
 // Device parses device mapping string to a src, dest & permissions string
 // Valid values for device look like:
-//
-//	'/dev/sdc"
-//	'/dev/sdc:/dev/xvdc"
-//	'/dev/sdc:/dev/xvdc:rwm"
-//	'/dev/sdc:rm"
+//    '/dev/sdc"
+//    '/dev/sdc:/dev/xvdc"
+//    '/dev/sdc:/dev/xvdc:rwm"
+//    '/dev/sdc:rm"
 func Device(device string) (string, string, string, error) {
 	src := ""
 	dst := ""
@@ -1070,9 +980,11 @@ func isValidDeviceMode(mode string) bool {
 	return true
 }
 
-// GetTempDir returns the path of the preferred temporary directory on the host.
 func GetTempDir() string {
-	return tmpdir.GetTempDir()
+	if tmpdir, ok := os.LookupEnv("TMPDIR"); ok {
+		return tmpdir
+	}
+	return "/var/tmp"
 }
 
 // Secrets parses the --secret flag
@@ -1153,42 +1065,15 @@ func SSH(sshSources []string) (map[string]*sshagent.Source, error) {
 	return parsed, nil
 }
 
-// ContainerIgnoreFile consumes path to `dockerignore` or `containerignore`
-// and returns list of files to exclude along with the path to processed ignore
-// file. Deprecated since this might become internal only, please avoid relying
-// on this function.
-func ContainerIgnoreFile(contextDir, path string, containerFiles []string) ([]string, string, error) {
+func ContainerIgnoreFile(contextDir, path string) ([]string, string, error) {
 	if path != "" {
 		excludes, err := imagebuilder.ParseIgnore(path)
 		return excludes, path, err
 	}
-	// If path was not supplied give priority to `<containerfile>.containerignore` first.
-	for _, containerfile := range containerFiles {
-		if !filepath.IsAbs(containerfile) {
-			containerfile = filepath.Join(contextDir, containerfile)
-		}
-		containerfileIgnore := ""
-		if _, err := os.Stat(containerfile + ".containerignore"); err == nil {
-			containerfileIgnore = containerfile + ".containerignore"
-		}
-		if _, err := os.Stat(containerfile + ".dockerignore"); err == nil {
-			containerfileIgnore = containerfile + ".dockerignore"
-		}
-		if containerfileIgnore != "" {
-			excludes, err := imagebuilder.ParseIgnore(containerfileIgnore)
-			return excludes, containerfileIgnore, err
-		}
-	}
-	path, symlinkErr := securejoin.SecureJoin(contextDir, ".containerignore")
-	if symlinkErr != nil {
-		return nil, "", symlinkErr
-	}
+	path = filepath.Join(contextDir, ".containerignore")
 	excludes, err := imagebuilder.ParseIgnore(path)
 	if errors.Is(err, os.ErrNotExist) {
-		path, symlinkErr = securejoin.SecureJoin(contextDir, ".dockerignore")
-		if symlinkErr != nil {
-			return nil, "", symlinkErr
-		}
+		path = filepath.Join(contextDir, ".dockerignore")
 		excludes, err = imagebuilder.ParseIgnore(path)
 	}
 	if errors.Is(err, os.ErrNotExist) {

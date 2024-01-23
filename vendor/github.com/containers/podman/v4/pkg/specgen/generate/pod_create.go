@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package generate
 
 import (
@@ -21,15 +18,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-func MakePod(p *entities.PodSpec, rt *libpod.Runtime) (_ *libpod.Pod, finalErr error) {
-	var createdPod *libpod.Pod
-	defer func() {
-		if finalErr != nil && createdPod != nil {
-			if _, err := rt.RemovePod(context.Background(), createdPod, true, true, nil); err != nil {
-				logrus.Errorf("Removing pod: %v", err)
-			}
-		}
-	}()
+func MakePod(p *entities.PodSpec, rt *libpod.Runtime) (*libpod.Pod, error) {
 	if err := p.PodSpecGen.Validate(); err != nil {
 		return nil, err
 	}
@@ -47,18 +36,28 @@ func MakePod(p *entities.PodSpec, rt *libpod.Runtime) (_ *libpod.Pod, finalErr e
 		p.PodSpecGen.InfraContainerSpec.RawImageName = imageName
 	}
 
-	spec, err := MapSpec(&p.PodSpecGen)
-	if err != nil {
-		return nil, err
+	if !p.PodSpecGen.NoInfra && p.PodSpecGen.InfraContainerSpec != nil {
+		var err error
+		p.PodSpecGen.InfraContainerSpec, err = MapSpec(&p.PodSpecGen)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := specgen.FinishThrottleDevices(spec); err != nil {
-		return nil, err
-	}
-	if err := specgen.WeightDevices(spec); err != nil {
-		return nil, err
-	}
-	if spec.ResourceLimits != nil && spec.ResourceLimits.BlockIO != nil {
-		p.PodSpecGen.ResourceLimits.BlockIO = spec.ResourceLimits.BlockIO
+
+	if !p.PodSpecGen.NoInfra {
+		err := specgen.FinishThrottleDevices(p.PodSpecGen.InfraContainerSpec)
+		if err != nil {
+			return nil, err
+		}
+		if p.PodSpecGen.InfraContainerSpec.ResourceLimits.BlockIO != nil {
+			p.PodSpecGen.ResourceLimits.BlockIO = p.PodSpecGen.InfraContainerSpec.ResourceLimits.BlockIO
+		}
+
+		err = specgen.WeightDevices(p.PodSpecGen.InfraContainerSpec)
+		if err != nil {
+			return nil, err
+		}
+		p.PodSpecGen.ResourceLimits = p.PodSpecGen.InfraContainerSpec.ResourceLimits
 	}
 
 	options, err := createPodOptions(&p.PodSpecGen)
@@ -70,8 +69,6 @@ func MakePod(p *entities.PodSpec, rt *libpod.Runtime) (_ *libpod.Pod, finalErr e
 	if err != nil {
 		return nil, err
 	}
-	createdPod = pod
-
 	if !p.PodSpecGen.NoInfra && p.PodSpecGen.InfraContainerSpec != nil {
 		if p.PodSpecGen.InfraContainerSpec.Name == "" {
 			p.PodSpecGen.InfraContainerSpec.Name = pod.ID()[:12] + "-infra"
@@ -116,12 +113,11 @@ func createPodOptions(p *specgen.PodSpecGenerator) ([]libpod.PodCreateOption, er
 	var (
 		options []libpod.PodCreateOption
 	)
-
-	if p.ShareParent == nil || (p.ShareParent != nil && *p.ShareParent) {
-		options = append(options, libpod.WithPodParent())
-	}
 	if !p.NoInfra {
 		options = append(options, libpod.WithInfraContainer())
+		if p.ShareParent == nil || (p.ShareParent != nil && *p.ShareParent) {
+			options = append(options, libpod.WithPodParent())
+		}
 		nsOptions, err := GetNamespaceOptions(p.SharedNamespaces, p.InfraContainerSpec.NetNS.IsHost())
 		if err != nil {
 			return nil, err
@@ -159,10 +155,6 @@ func createPodOptions(p *specgen.PodSpecGenerator) ([]libpod.PodCreateOption, er
 	}
 
 	options = append(options, libpod.WithPodExitPolicy(p.ExitPolicy))
-	options = append(options, libpod.WithPodRestartPolicy(p.RestartPolicy))
-	if p.RestartRetries != nil {
-		options = append(options, libpod.WithPodRestartRetries(*p.RestartRetries))
-	}
 
 	return options, nil
 }
@@ -170,18 +162,12 @@ func createPodOptions(p *specgen.PodSpecGenerator) ([]libpod.PodCreateOption, er
 // MapSpec modifies the already filled Infra specgenerator,
 // replacing necessary values with those specified in pod creation
 func MapSpec(p *specgen.PodSpecGenerator) (*specgen.SpecGenerator, error) {
-	var spec *specgen.SpecGenerator
-	if p.InfraContainerSpec != nil {
-		spec = p.InfraContainerSpec
-	} else {
-		spec = &specgen.SpecGenerator{}
-	}
 	if len(p.PortMappings) > 0 {
 		ports, err := ParsePortMapping(p.PortMappings, nil)
 		if err != nil {
 			return nil, err
 		}
-		spec.PortMappings = ports
+		p.InfraContainerSpec.PortMappings = ports
 	}
 	switch p.NetNS.NSMode {
 	case specgen.Default, "":
@@ -190,90 +176,76 @@ func MapSpec(p *specgen.PodSpecGenerator) (*specgen.SpecGenerator, error) {
 			break
 		}
 	case specgen.Bridge:
-		spec.NetNS.NSMode = specgen.Bridge
+		p.InfraContainerSpec.NetNS.NSMode = specgen.Bridge
 		logrus.Debugf("Pod using bridge network mode")
 	case specgen.Private:
-		spec.NetNS.NSMode = specgen.Private
+		p.InfraContainerSpec.NetNS.NSMode = specgen.Private
 		logrus.Debugf("Pod will use default network mode")
 	case specgen.Host:
 		logrus.Debugf("Pod will use host networking")
-		if len(spec.PortMappings) > 0 ||
-			len(spec.Networks) > 0 ||
-			spec.NetNS.NSMode == specgen.NoNetwork {
+		if len(p.InfraContainerSpec.PortMappings) > 0 ||
+			len(p.InfraContainerSpec.Networks) > 0 ||
+			p.InfraContainerSpec.NetNS.NSMode == specgen.NoNetwork {
 			return nil, fmt.Errorf("cannot set host network if network-related configuration is specified: %w", define.ErrInvalidArg)
 		}
-		spec.NetNS.NSMode = specgen.Host
+		p.InfraContainerSpec.NetNS.NSMode = specgen.Host
 	case specgen.Slirp:
 		logrus.Debugf("Pod will use slirp4netns")
-		if spec.NetNS.NSMode != specgen.Host {
-			spec.NetworkOptions = p.NetworkOptions
-			spec.NetNS.NSMode = specgen.Slirp
+		if p.InfraContainerSpec.NetNS.NSMode != specgen.Host {
+			p.InfraContainerSpec.NetworkOptions = p.NetworkOptions
+			p.InfraContainerSpec.NetNS.NSMode = specgen.Slirp
 		}
-	case specgen.Pasta:
-		logrus.Debugf("Pod will use pasta")
-		if spec.NetNS.NSMode != specgen.Host {
-			spec.NetworkOptions = p.NetworkOptions
-			spec.NetNS.NSMode = specgen.Pasta
-		}
-	case specgen.Path:
-		logrus.Debugf("Pod will use namespace path networking")
-		spec.NetNS.NSMode = specgen.Path
-		spec.NetNS.Value = p.PodNetworkConfig.NetNS.Value
 	case specgen.NoNetwork:
 		logrus.Debugf("Pod will not use networking")
-		if len(spec.PortMappings) > 0 ||
-			len(spec.Networks) > 0 ||
-			spec.NetNS.NSMode == specgen.Host {
+		if len(p.InfraContainerSpec.PortMappings) > 0 ||
+			len(p.InfraContainerSpec.Networks) > 0 ||
+			p.InfraContainerSpec.NetNS.NSMode == specgen.Host {
 			return nil, fmt.Errorf("cannot disable pod network if network-related configuration is specified: %w", define.ErrInvalidArg)
 		}
-		spec.NetNS.NSMode = specgen.NoNetwork
+		p.InfraContainerSpec.NetNS.NSMode = specgen.NoNetwork
 	default:
 		return nil, fmt.Errorf("pods presently do not support network mode %s", p.NetNS.NSMode)
 	}
 
 	if len(p.InfraCommand) > 0 {
-		spec.Entrypoint = p.InfraCommand
+		p.InfraContainerSpec.Entrypoint = p.InfraCommand
 	}
 
 	if len(p.HostAdd) > 0 {
-		spec.HostAdd = p.HostAdd
+		p.InfraContainerSpec.HostAdd = p.HostAdd
 	}
 	if len(p.DNSServer) > 0 {
 		var dnsServers []net.IP
 		dnsServers = append(dnsServers, p.DNSServer...)
 
-		spec.DNSServers = dnsServers
+		p.InfraContainerSpec.DNSServers = dnsServers
 	}
 	if len(p.DNSOption) > 0 {
-		spec.DNSOptions = p.DNSOption
+		p.InfraContainerSpec.DNSOptions = p.DNSOption
 	}
 	if len(p.DNSSearch) > 0 {
-		spec.DNSSearch = p.DNSSearch
+		p.InfraContainerSpec.DNSSearch = p.DNSSearch
 	}
 	if p.NoManageResolvConf {
-		spec.UseImageResolvConf = true
+		p.InfraContainerSpec.UseImageResolvConf = true
 	}
 	if len(p.Networks) > 0 {
-		spec.Networks = p.Networks
+		p.InfraContainerSpec.Networks = p.Networks
 	}
 	// deprecated cni networks for api users
 	if len(p.CNINetworks) > 0 {
-		spec.CNINetworks = p.CNINetworks
+		p.InfraContainerSpec.CNINetworks = p.CNINetworks
 	}
 	if p.NoManageHosts {
-		spec.UseImageHosts = p.NoManageHosts
+		p.InfraContainerSpec.UseImageHosts = p.NoManageHosts
 	}
 
 	if len(p.InfraConmonPidFile) > 0 {
-		spec.ConmonPidFile = p.InfraConmonPidFile
+		p.InfraContainerSpec.ConmonPidFile = p.InfraConmonPidFile
 	}
 
-	if p.Sysctl != nil && len(p.Sysctl) > 0 {
-		spec.Sysctl = p.Sysctl
-	}
-
-	spec.Image = p.InfraImage
-	return spec, nil
+	p.InfraContainerSpec.Image = p.InfraImage
+	return p.InfraContainerSpec, nil
 }
 
 func PodConfigToSpec(rt *libpod.Runtime, spec *specgen.PodSpecGenerator, infraOptions *entities.ContainerCreateOptions, id string) (p *libpod.Pod, err error) {

@@ -13,8 +13,7 @@ import (
 )
 
 // FIXME: the `ignore` parameter is very likely wrong here as it should rather
-//
-//	be used on *errors* from operations such as remove.
+//        be used on *errors* from operations such as remove.
 func getContainersByContext(contextWithConnection context.Context, all, ignore bool, namesOrIDs []string) ([]entities.ListContainer, error) { //nolint:unparam
 	ctrs, _, err := getContainersAndInputByContext(contextWithConnection, all, ignore, namesOrIDs, nil)
 	return ctrs, err
@@ -29,22 +28,31 @@ func getContainersAndInputByContext(contextWithConnection context.Context, all, 
 	if err != nil {
 		return nil, nil, err
 	}
-
 	rawInputs := []string{}
-
-	// If no names or IDs are specified, we can return the result as is.
-	// Otherwise, we need to do some further lookups.
-	if len(namesOrIDs) == 0 {
+	switch {
+	case len(filters) > 0:
+		namesOrIDs = nil
+		for i := range allContainers {
+			if len(namesOrIDs) > 0 {
+				for _, name := range namesOrIDs {
+					if name == allContainers[i].ID {
+						namesOrIDs = append(namesOrIDs, allContainers[i].ID)
+					}
+				}
+			} else {
+				namesOrIDs = append(namesOrIDs, allContainers[i].ID)
+			}
+		}
+	case all:
 		for i := range allContainers {
 			rawInputs = append(rawInputs, allContainers[i].ID)
 		}
 		return allContainers, rawInputs, err
 	}
 
-	// Note: it would be nicer if the lists endpoint would support batch
-	// name/ID lookups as we could use the libpod backend for looking up
-	// containers rather than risking diverging the local and remote
-	// lookups.
+	// Note: it would be nicer if the lists endpoint would support that as
+	// we could use the libpod backend for looking up containers rather
+	// than risking diverging the local and remote lookups.
 	//
 	// A `--filter nameOrId=abc` that can be specified multiple times would
 	// be awesome to have.
@@ -52,7 +60,7 @@ func getContainersAndInputByContext(contextWithConnection context.Context, all, 
 	for _, nameOrID := range namesOrIDs {
 		// First determine if the container exists by doing an inspect.
 		// Inspect takes supports names and IDs and let's us determine
-		// a container's full ID.
+		// a containers full ID.
 		inspectData, err := containers.Inspect(contextWithConnection, nameOrID, new(containers.InspectOptions).WithSize(false))
 		if err != nil {
 			if ignore && errorhandling.Contains(err, define.ErrNoSuchCtr) {
@@ -104,7 +112,7 @@ func getPodsByContext(contextWithConnection context.Context, all bool, namesOrID
 	for _, nameOrID := range namesOrIDs {
 		// First determine if the pod exists by doing an inspect.
 		// Inspect takes supports names and IDs and let's us determine
-		// a container's full ID.
+		// a containers full ID.
 		inspectData, err := pods.Inspect(contextWithConnection, nameOrID, nil)
 		if err != nil {
 			if errorhandling.Contains(err, define.ErrNoSuchPod) {

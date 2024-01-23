@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 // On FreeBSD, the container's mounts are in the global mount

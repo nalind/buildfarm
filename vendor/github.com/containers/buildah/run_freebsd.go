@@ -6,9 +6,12 @@ package buildah
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	"github.com/containers/buildah/bind"
@@ -16,18 +19,12 @@ import (
 	"github.com/containers/buildah/copier"
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/internal"
-	"github.com/containers/buildah/internal/tmpdir"
 	"github.com/containers/buildah/pkg/jail"
-	"github.com/containers/buildah/pkg/overlay"
-	"github.com/containers/buildah/pkg/parse"
-	butil "github.com/containers/buildah/pkg/util"
 	"github.com/containers/buildah/util"
 	"github.com/containers/common/libnetwork/resolvconf"
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/storage/pkg/idtools"
-	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -74,7 +71,7 @@ func setChildProcess() error {
 }
 
 func (b *Builder) Run(command []string, options RunOptions) error {
-	p, err := os.MkdirTemp(tmpdir.GetTempDir(), define.Package)
+	p, err := ioutil.TempDir("", Package)
 	if err != nil {
 		return err
 	}
@@ -93,7 +90,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 
 	gp, err := generate.New("freebsd")
 	if err != nil {
-		return fmt.Errorf("generating new 'freebsd' runtime spec: %w", err)
+		return fmt.Errorf("error generating new 'freebsd' runtime spec: %w", err)
 	}
 	g := &gp
 
@@ -101,13 +98,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 	if isolation == IsolationDefault {
 		isolation = b.Isolation
 		if isolation == IsolationDefault {
-			isolation, err = parse.IsolationOption("")
-			if err != nil {
-				logrus.Debugf("got %v while trying to determine default isolation, guessing OCI", err)
-				isolation = IsolationOCI
-			} else if isolation == IsolationDefault {
-				isolation = IsolationOCI
-			}
+			isolation = IsolationOCI
 		}
 	}
 	if err := checkAndOverrideIsolationOptions(isolation, &options); err != nil {
@@ -132,7 +123,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 	}
 	mountPoint, err := b.Mount(b.MountLabel)
 	if err != nil {
-		return fmt.Errorf("mounting container %q: %w", b.ContainerID, err)
+		return fmt.Errorf("error mounting container %q: %w", b.ContainerID, err)
 	}
 	defer func() {
 		if err := b.Unmount(); err != nil {
@@ -149,7 +140,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 
 	setupTerminal(g, options.Terminal, options.TerminalSize)
 
-	configureNetwork, networkString, err := b.configureNamespaces(g, &options)
+	configureNetwork, configureNetworks, err := b.configureNamespaces(g, &options)
 	if err != nil {
 		return err
 	}
@@ -199,15 +190,15 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 	rootIDPair := &idtools.IDPair{UID: int(rootUID), GID: int(rootGID)}
 
 	hostFile := ""
-	if !options.NoHosts && !cutil.StringInSlice(config.DefaultHostsFile, volumes) && options.ConfigureNetwork != define.NetworkDisabled {
-		hostFile, err = b.generateHosts(path, rootIDPair, mountPoint, spec)
+	if !options.NoHosts && !contains(volumes, config.DefaultHostsFile) && options.ConfigureNetwork != define.NetworkDisabled {
+		hostFile, err = b.generateHosts(path, rootIDPair, mountPoint)
 		if err != nil {
 			return err
 		}
 		bindFiles[config.DefaultHostsFile] = hostFile
 	}
 
-	if !cutil.StringInSlice(resolvconf.DefaultResolvConf, volumes) && options.ConfigureNetwork != define.NetworkDisabled && !(len(b.CommonBuildOpts.DNSServers) == 1 && strings.ToLower(b.CommonBuildOpts.DNSServers[0]) == "none") {
+	if !contains(volumes, resolvconf.DefaultResolvConf) && options.ConfigureNetwork != define.NetworkDisabled && !(len(b.CommonBuildOpts.DNSServers) == 1 && strings.ToLower(b.CommonBuildOpts.DNSServers[0]) == "none") {
 		resolvFile, err := b.addResolvConf(path, rootIDPair, b.CommonBuildOpts.DNSServers, b.CommonBuildOpts.DNSSearch, b.CommonBuildOpts.DNSOptions, nil)
 		if err != nil {
 			return err
@@ -225,7 +216,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 
 	runArtifacts, err := b.setupMounts(mountPoint, spec, path, options.Mounts, bindFiles, volumes, b.CommonBuildOpts.Volumes, options.RunMounts, runMountInfo)
 	if err != nil {
-		return fmt.Errorf("resolving mountpoints for container %q: %w", b.ContainerID, err)
+		return fmt.Errorf("error resolving mountpoints for container %q: %w", b.ContainerID, err)
 	}
 	if runArtifacts.SSHAuthSock != "" {
 		sshenv := "SSH_AUTH_SOCK=" + runArtifacts.SSHAuthSock
@@ -261,6 +252,10 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 		jconf.Set("devfs_ruleset", 4)
 		jconf.Set("allow.raw_sockets", true)
 		jconf.Set("allow.chflags", true)
+		jconf.Set("allow.mount", true)
+		jconf.Set("allow.mount.devfs", true)
+		jconf.Set("allow.mount.nullfs", true)
+		jconf.Set("allow.mount.fdescfs", true)
 		jconf.Set("securelevel", -1)
 		netjail, err := jail.Create(jconf)
 		if err != nil {
@@ -284,7 +279,7 @@ func (b *Builder) Run(command []string, options RunOptions) error {
 		} else {
 			moreCreateArgs = nil
 		}
-		err = b.runUsingRuntimeSubproc(isolation, options, configureNetwork, networkString, moreCreateArgs, spec, mountPoint, path, containerName, b.Container, hostFile)
+		err = b.runUsingRuntimeSubproc(isolation, options, configureNetwork, configureNetworks, moreCreateArgs, spec, mountPoint, path, containerName, b.Container, hostFile)
 	case IsolationChroot:
 		err = chroot.RunUsingChroot(spec, path, homeDir, options.Stdin, options.Stdout, options.Stderr)
 	default:
@@ -299,7 +294,7 @@ func addCommonOptsToSpec(commonOpts *define.CommonBuildOptions, g *generate.Gene
 		return fmt.Errorf("failed to get container config: %w", err)
 	}
 	// Other process resource limits
-	if err := addRlimits(commonOpts.Ulimit, g, defaultContainerConfig.Containers.DefaultUlimits.Get()); err != nil {
+	if err := addRlimits(commonOpts.Ulimit, g, defaultContainerConfig.Containers.DefaultUlimits); err != nil {
 		return err
 	}
 
@@ -313,8 +308,7 @@ func setupSpecialMountSpecChanges(spec *spec.Spec, shmSize string) ([]specs.Moun
 	return spec.Mounts, nil
 }
 
-// If this function succeeds and returns a non-nil *lockfile.LockFile, the caller must unlock it (when??).
-func (b *Builder) getCacheMount(tokens []string, stageMountPoints map[string]internal.StageMountDetails, idMaps IDMaps, workDir string) (*spec.Mount, *lockfile.LockFile, error) {
+func (b *Builder) getCacheMount(tokens []string, stageMountPoints map[string]internal.StageMountDetails, idMaps IDMaps) (*spec.Mount, []string, error) {
 	return nil, nil, errors.New("cache mounts not supported on freebsd")
 }
 
@@ -322,26 +316,17 @@ func (b *Builder) runSetupVolumeMounts(mountLabel string, volumeMounts []string,
 	// Make sure the overlay directory is clean before running
 	_, err := b.store.ContainerDirectory(b.ContainerID)
 	if err != nil {
-		return nil, fmt.Errorf("looking up container directory for %s: %w", b.ContainerID, err)
+		return nil, fmt.Errorf("error looking up container directory for %s: %w", b.ContainerID, err)
 	}
 
 	parseMount := func(mountType, host, container string, options []string) (specs.Mount, error) {
-		var foundrw, foundro, foundO bool
-		var upperDir string
+		var foundrw, foundro bool
 		for _, opt := range options {
 			switch opt {
 			case "rw":
 				foundrw = true
 			case "ro":
 				foundro = true
-			case "O":
-				foundO = true
-			}
-			if strings.HasPrefix(opt, "upperdir") {
-				splitOpt := strings.SplitN(opt, "=", 2)
-				if len(splitOpt) > 1 {
-					upperDir = splitOpt[1]
-				}
 			}
 		}
 		if !foundrw && !foundro {
@@ -349,30 +334,6 @@ func (b *Builder) runSetupVolumeMounts(mountLabel string, volumeMounts []string,
 		}
 		if mountType == "bind" || mountType == "rbind" {
 			mountType = "nullfs"
-		}
-		if foundO {
-			containerDir, err := b.store.ContainerDirectory(b.ContainerID)
-			if err != nil {
-				return specs.Mount{}, err
-			}
-
-			contentDir, err := overlay.TempDir(containerDir, idMaps.rootUID, idMaps.rootGID)
-			if err != nil {
-				return specs.Mount{}, fmt.Errorf("failed to create TempDir in the %s directory: %w", containerDir, err)
-			}
-
-			overlayOpts := overlay.Options{
-				RootUID:                idMaps.rootUID,
-				RootGID:                idMaps.rootGID,
-				UpperDirOptionFragment: upperDir,
-				GraphOpts:              b.store.GraphOptions(),
-			}
-
-			overlayMount, err := overlay.MountWithOptions(contentDir, host, container, &overlayOpts)
-			if err == nil {
-				b.TempVolumes[contentDir] = true
-			}
-			return overlayMount, err
 		}
 		return specs.Mount{
 			Destination: container,
@@ -398,7 +359,8 @@ func (b *Builder) runSetupVolumeMounts(mountLabel string, volumeMounts []string,
 		if len(spliti) > 2 {
 			options = strings.Split(spliti[2], ",")
 		}
-		mount, err := parseMount("nullfs", spliti[0], spliti[1], options)
+		options = append(options, "bind")
+		mount, err := parseMount("bind", spliti[0], spliti[1], options)
 		if err != nil {
 			return nil, err
 		}
@@ -411,15 +373,10 @@ func setupCapabilities(g *generate.Generator, defaultCapabilities, adds, drops [
 	return nil
 }
 
-func (b *Builder) runConfigureNetwork(pid int, isolation define.Isolation, options RunOptions, networkString string, containerName string) (teardown func(), netStatus map[string]nettypes.StatusBlock, err error) {
+func (b *Builder) runConfigureNetwork(pid int, isolation define.Isolation, options RunOptions, configureNetworks []string, containerName string) (teardown func(), netStatus map[string]nettypes.StatusBlock, err error) {
 	//if isolation == IsolationOCIRootless {
 	//return setupRootlessNetwork(pid)
 	//}
-
-	var configureNetworks []string
-	if len(networkString) > 0 {
-		configureNetworks = strings.Split(networkString, ",")
-	}
 
 	if len(configureNetworks) == 0 {
 		configureNetworks = []string{b.NetworkInterface.DefaultNetworkName()}
@@ -455,7 +412,7 @@ func (b *Builder) runConfigureNetwork(pid int, isolation define.Isolation, optio
 	return teardown, nil, nil
 }
 
-func setupNamespaces(logger *logrus.Logger, g *generate.Generator, namespaceOptions define.NamespaceOptions, idmapOptions define.IDMappingOptions, policy define.NetworkConfigurationPolicy) (configureNetwork bool, networkString string, configureUTS bool, err error) {
+func setupNamespaces(logger *logrus.Logger, g *generate.Generator, namespaceOptions define.NamespaceOptions, idmapOptions define.IDMappingOptions, policy define.NetworkConfigurationPolicy) (configureNetwork bool, configureNetworks []string, configureUTS bool, err error) {
 	// Set namespace options in the container configuration.
 	for _, namespaceOption := range namespaceOptions {
 		switch namespaceOption.Name {
@@ -463,7 +420,7 @@ func setupNamespaces(logger *logrus.Logger, g *generate.Generator, namespaceOpti
 			configureNetwork = false
 			if !namespaceOption.Host && (namespaceOption.Path == "" || !filepath.IsAbs(namespaceOption.Path)) {
 				if namespaceOption.Path != "" && !filepath.IsAbs(namespaceOption.Path) {
-					networkString = namespaceOption.Path
+					configureNetworks = strings.Split(namespaceOption.Path, ",")
 					namespaceOption.Path = ""
 				}
 				configureNetwork = (policy != define.NetworkDisabled)
@@ -479,13 +436,13 @@ func setupNamespaces(logger *logrus.Logger, g *generate.Generator, namespaceOpti
 		// equivalents for UTS and and network namespaces.
 	}
 
-	return configureNetwork, networkString, configureUTS, nil
+	return configureNetwork, configureNetworks, configureUTS, nil
 }
 
-func (b *Builder) configureNamespaces(g *generate.Generator, options *RunOptions) (bool, string, error) {
+func (b *Builder) configureNamespaces(g *generate.Generator, options *RunOptions) (bool, []string, error) {
 	defaultNamespaceOptions, err := DefaultNamespaceOptions()
 	if err != nil {
-		return false, "", err
+		return false, nil, err
 	}
 
 	namespaceOptions := defaultNamespaceOptions
@@ -506,9 +463,9 @@ func (b *Builder) configureNamespaces(g *generate.Generator, options *RunOptions
 		}
 	}
 
-	configureNetwork, networkString, configureUTS, err := setupNamespaces(options.Logger, g, namespaceOptions, b.IDMappingOptions, networkPolicy)
+	configureNetwork, configureNetworks, configureUTS, err := setupNamespaces(options.Logger, g, namespaceOptions, b.IDMappingOptions, networkPolicy)
 	if err != nil {
-		return false, "", err
+		return false, nil, err
 	}
 
 	if configureUTS {
@@ -535,7 +492,7 @@ func (b *Builder) configureNamespaces(g *generate.Generator, options *RunOptions
 		spec.Process.Env = append(spec.Process.Env, fmt.Sprintf("HOSTNAME=%s", spec.Hostname))
 	}
 
-	return configureNetwork, networkString, nil
+	return configureNetwork, configureNetworks, nil
 }
 
 func runSetupBoundFiles(bundlePath string, bindFiles map[string]string) (mounts []specs.Mount) {
@@ -562,7 +519,7 @@ func addRlimits(ulimit []string, g *generate.Generator, defaultUlimits []string)
 
 	ulimit = append(defaultUlimits, ulimit...)
 	for _, u := range ulimit {
-		if ul, err = butil.ParseUlimit(u); err != nil {
+		if ul, err = units.ParseUlimit(u); err != nil {
 			return fmt.Errorf("ulimit option %q requires name=SOFT:HARD, failed to be parsed: %w", u, err)
 		}
 
@@ -571,13 +528,21 @@ func addRlimits(ulimit []string, g *generate.Generator, defaultUlimits []string)
 	return nil
 }
 
+// setPdeathsig sets a parent-death signal for the process
+func setPdeathsig(cmd *exec.Cmd) {
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Pdeathsig = syscall.SIGKILL
+}
+
 // Create pipes to use for relaying stdio.
 func runMakeStdioPipe(uid, gid int) ([][]int, error) {
 	stdioPipe := make([][]int, 3)
 	for i := range stdioPipe {
 		stdioPipe[i] = make([]int, 2)
 		if err := unix.Pipe(stdioPipe[i]); err != nil {
-			return nil, fmt.Errorf("creating pipe for container FD %d: %w", i, err)
+			return nil, fmt.Errorf("error creating pipe for container FD %d: %w", i, err)
 		}
 	}
 	return stdioPipe, nil

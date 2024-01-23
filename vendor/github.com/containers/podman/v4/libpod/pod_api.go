@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -43,14 +40,13 @@ func (p *Pod) startInitContainers(ctx context.Context) error {
 			icLock := initCon.lock
 			icLock.Lock()
 			var time *uint
-			opts := ctrRmOpts{
-				RemovePod: true,
-				Timeout:   time,
-			}
-
-			if _, _, err := p.runtime.removeContainer(ctx, initCon, opts); err != nil {
+			if err := p.runtime.removeContainer(ctx, initCon, false, false, true, false, time); err != nil {
 				icLock.Unlock()
 				return fmt.Errorf("failed to remove once init container %s: %w", initCon.ID(), err)
+			}
+			// Removing a container this way requires an explicit call to clean up the db
+			if err := p.runtime.state.RemoveContainerFromPod(p, initCon); err != nil {
+				logrus.Errorf("Removing container %s from database: %v", initCon.ID(), err)
 			}
 			icLock.Unlock()
 		}
@@ -209,13 +205,6 @@ func (p *Pod) stopWithTimeout(ctx context.Context, cleanup bool, timeout int) (m
 	}
 
 	if err := p.maybeStopServiceContainer(); err != nil {
-		return nil, err
-	}
-
-	if err := p.updatePod(); err != nil {
-		return nil, err
-	}
-	if err := p.removePodCgroup(); err != nil {
 		return nil, err
 	}
 
@@ -592,15 +581,20 @@ func (p *Pod) Status() (map[string]define.ContainerStatus, error) {
 }
 
 func containerStatusFromContainers(allCtrs []*Container) (map[string]define.ContainerStatus, error) {
+	// We need to lock all the containers
+	for _, ctr := range allCtrs {
+		ctr.lock.Lock()
+		defer ctr.lock.Unlock()
+	}
+
+	// Now that all containers are locked, get their status
 	status := make(map[string]define.ContainerStatus, len(allCtrs))
 	for _, ctr := range allCtrs {
-		state, err := ctr.State()
-
-		if err != nil {
+		if err := ctr.syncContainer(); err != nil {
 			return nil, err
 		}
 
-		status[ctr.ID()] = state
+		status[ctr.ID()] = ctr.state.State
 	}
 
 	return status, nil
@@ -720,7 +714,7 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 			infraConfig.Networks = netNames
 		}
 		infraConfig.NetworkOptions = infra.config.ContainerNetworkConfig.NetworkOptions
-		infraConfig.PortBindings = makeInspectPortBindings(infra.config.ContainerNetworkConfig.PortMappings)
+		infraConfig.PortBindings = makeInspectPortBindings(infra.config.ContainerNetworkConfig.PortMappings, nil)
 	}
 
 	inspectData := define.InspectPodData{
@@ -756,8 +750,6 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 		CPUSetMems:          p.CPUSetMems(),
 		BlkioDeviceWriteBps: p.BlkiThrottleWriteBps(),
 		CPUShares:           p.CPUShares(),
-		RestartPolicy:       p.config.RestartPolicy,
-		LockNumber:          p.lock.ID(),
 	}
 
 	return &inspectData, nil

@@ -67,9 +67,8 @@ func Push(ctx context.Context, source string, destination string, options *PushO
 	}
 
 	dec := json.NewDecoder(response.Body)
-LOOP:
 	for {
-		var report entities.ImagePushStream
+		var report entities.ImagePushReport
 		if err := dec.Decode(&report); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
@@ -79,7 +78,7 @@ LOOP:
 
 		select {
 		case <-response.Request.Context().Done():
-			break LOOP
+			break
 		default:
 			// non-blocking select
 		}
@@ -87,8 +86,6 @@ LOOP:
 		switch {
 		case report.Stream != "":
 			fmt.Fprint(writer, report.Stream)
-		case report.ManifestDigest != "":
-			options.ManifestDigest = &report.ManifestDigest
 		case report.Error != "":
 			// There can only be one error.
 			return errors.New(report.Error)

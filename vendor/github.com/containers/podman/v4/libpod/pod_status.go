@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import "github.com/containers/podman/v4/libpod/define"

@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -14,7 +11,6 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/common/pkg/util"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/storage/pkg/stringid"
@@ -24,7 +20,7 @@ import (
 
 // ExecConfig contains the configuration of an exec session
 type ExecConfig struct {
-	// Command is the command that will be invoked in the exec session.
+	// Command the the command that will be invoked in the exec session.
 	// Must not be empty.
 	Command []string `json:"command"`
 	// Terminal is whether the exec session will allocate a pseudoterminal.
@@ -324,7 +320,9 @@ func (c *Container) execStartAndAttach(sessionID string, streams *define.AttachS
 		return err
 	}
 
-	if !isHealthcheck {
+	if isHealthcheck {
+		c.newContainerEvent(events.HealthStatus)
+	} else {
 		c.newContainerEvent(events.Exec)
 	}
 
@@ -404,7 +402,7 @@ func (c *Container) execStartAndAttach(sessionID string, streams *define.AttachS
 
 	logrus.Debugf("Container %s exec session %s completed with exit code %d", c.ID(), session.ID(), exitCode)
 
-	if err := justWriteExecExitCode(c, session.ID(), exitCode, !isHealthcheck); err != nil {
+	if err := justWriteExecExitCode(c, session.ID(), exitCode); err != nil {
 		if lastErr != nil {
 			logrus.Errorf("Container %s exec session %s error: %v", c.ID(), session.ID(), lastErr)
 		}
@@ -762,19 +760,11 @@ func (c *Container) Exec(config *ExecConfig, streams *define.AttachStreams, resi
 // Exec emulates the old Libpod exec API, providing a single call to create,
 // run, and remove an exec session. Returns exit code and error. Exit code is
 // not guaranteed to be set sanely if error is not nil.
-func (c *Container) exec(config *ExecConfig, streams *define.AttachStreams, resizeChan <-chan resize.TerminalSize, isHealthcheck bool) (exitCode int, retErr error) {
+func (c *Container) exec(config *ExecConfig, streams *define.AttachStreams, resizeChan <-chan resize.TerminalSize, isHealthcheck bool) (int, error) {
 	sessionID, err := c.ExecCreate(config)
 	if err != nil {
 		return -1, err
 	}
-	defer func() {
-		if err := c.ExecRemove(sessionID, false); err != nil {
-			if retErr == nil && !errors.Is(err, define.ErrNoSuchExecSession) {
-				exitCode = -1
-				retErr = err
-			}
-		}
-	}()
 
 	// Start resizing if we have a resize channel.
 	// This goroutine may likely leak, given that we cannot close it here.
@@ -824,7 +814,15 @@ func (c *Container) exec(config *ExecConfig, streams *define.AttachStreams, resi
 		}
 		return -1, err
 	}
-	return session.ExitCode, nil
+	exitCode := session.ExitCode
+	if err := c.ExecRemove(sessionID, false); err != nil {
+		if errors.Is(err, define.ErrNoSuchExecSession) {
+			return exitCode, nil
+		}
+		return -1, err
+	}
+
+	return exitCode, nil
 }
 
 // cleanupExecBundle cleanups an exec session after its done
@@ -863,7 +861,7 @@ func (c *Container) cleanupExecBundle(sessionID string) (err error) {
 	return
 }
 
-// the path to a container's exec session bundle
+// the path to a containers exec session bundle
 func (c *Container) execBundlePath(sessionID string) string {
 	return filepath.Join(c.bundlePath(), sessionID)
 }
@@ -925,7 +923,7 @@ func (c *Container) readExecExitCode(sessionID string) (int, error) {
 	chWait := make(chan error)
 	defer close(chWait)
 
-	_, err := util.WaitForFile(exitFile, chWait, time.Second*5)
+	_, err := WaitForFile(exitFile, chWait, time.Second*5)
 	if err != nil {
 		return -1, err
 	}
@@ -1074,6 +1072,14 @@ func (c *Container) removeAllExecSessions() error {
 	}
 	c.state.ExecSessions = nil
 	c.state.LegacyExecSessions = nil
+	if err := c.save(); err != nil {
+		if !errors.Is(err, define.ErrCtrRemoved) {
+			if lastErr != nil {
+				logrus.Errorf("Stopping container %s exec sessions: %v", c.ID(), lastErr)
+			}
+			lastErr = err
+		}
+	}
 
 	return lastErr
 }
@@ -1117,7 +1123,7 @@ func writeExecExitCode(c *Container, sessionID string, exitCode int) error {
 		return fmt.Errorf("syncing container %s state to remove exec session %s: %w", c.ID(), sessionID, err)
 	}
 
-	return justWriteExecExitCode(c, sessionID, exitCode, true)
+	return justWriteExecExitCode(c, sessionID, exitCode)
 }
 
 func retrieveAndWriteExecExitCode(c *Container, sessionID string) error {
@@ -1126,14 +1132,12 @@ func retrieveAndWriteExecExitCode(c *Container, sessionID string) error {
 		return err
 	}
 
-	return justWriteExecExitCode(c, sessionID, exitCode, true)
+	return justWriteExecExitCode(c, sessionID, exitCode)
 }
 
-func justWriteExecExitCode(c *Container, sessionID string, exitCode int, emitEvent bool) error {
+func justWriteExecExitCode(c *Container, sessionID string, exitCode int) error {
 	// Write an event first
-	if emitEvent {
-		c.newExecDiedEvent(sessionID, exitCode)
-	}
+	c.newExecDiedEvent(sessionID, exitCode)
 
 	session, ok := c.state.ExecSessions[sessionID]
 	if !ok {

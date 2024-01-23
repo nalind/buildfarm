@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -15,6 +12,7 @@ import (
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/libpod/events"
+	libpodutil "github.com/containers/podman/v4/pkg/util"
 	"github.com/sirupsen/logrus"
 )
 
@@ -71,7 +69,6 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 		PreferredManifestType: options.PreferredManifestType,
 	}
 	importBuilder, err := buildah.ImportBuilder(ctx, c.runtime.store, builderOptions)
-	importBuilder.Format = options.PreferredManifestType
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +148,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 	importBuilder.SetWorkDir(c.config.Spec.Process.Cwd)
 
 	// Process user changes
-	newImageConfig, err := libimage.ImageConfigFromChanges(options.Changes)
+	newImageConfig, err := libpodutil.GetImageConfig(options.Changes)
 	if err != nil {
 		return nil, err
 	}

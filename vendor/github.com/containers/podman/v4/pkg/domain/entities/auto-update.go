@@ -1,7 +1,5 @@
 package entities
 
-import "github.com/containers/image/v5/types"
-
 // AutoUpdateOptions are the options for running auto-update.
 type AutoUpdateOptions struct {
 	// Authfile to use when contacting registries.
@@ -13,9 +11,6 @@ type AutoUpdateOptions struct {
 	// If restarting the service with the new image failed, restart it
 	// another time with the previous image.
 	Rollback bool
-	// Allow contacting registries over HTTP, or HTTPS with failed TLS
-	// verification. Note that this does not affect other TLS connections.
-	InsecureSkipTLSVerify types.OptionalBool
 }
 
 // AutoUpdateReport contains the results from running auto-update.

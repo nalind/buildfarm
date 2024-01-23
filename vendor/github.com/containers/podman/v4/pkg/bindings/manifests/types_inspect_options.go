@@ -16,33 +16,3 @@ func (o *InspectOptions) Changed(fieldName string) bool {
 func (o *InspectOptions) ToParams() (url.Values, error) {
 	return util.ToParams(o)
 }
-
-// WithAuthfile set field Authfile to given value
-func (o *InspectOptions) WithAuthfile(value string) *InspectOptions {
-	o.Authfile = &value
-	return o
-}
-
-// GetAuthfile returns value of field Authfile
-func (o *InspectOptions) GetAuthfile() string {
-	if o.Authfile == nil {
-		var z string
-		return z
-	}
-	return *o.Authfile
-}
-
-// WithSkipTLSVerify set field SkipTLSVerify to given value
-func (o *InspectOptions) WithSkipTLSVerify(value bool) *InspectOptions {
-	o.SkipTLSVerify = &value
-	return o
-}
-
-// GetSkipTLSVerify returns value of field SkipTLSVerify
-func (o *InspectOptions) GetSkipTLSVerify() bool {
-	if o.SkipTLSVerify == nil {
-		var z bool
-		return z
-	}
-	return *o.SkipTLSVerify
-}

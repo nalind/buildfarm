@@ -7,10 +7,9 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 )
 
+//go:generate go run ../generator/generator.go LogOptions
 // LogOptions describe finer control of log content or
 // how the content is formatted.
-//
-//go:generate go run ../generator/generator.go LogOptions
 type LogOptions struct {
 	Follow     *bool
 	Since      *string
@@ -21,35 +20,31 @@ type LogOptions struct {
 	Until      *string
 }
 
+//go:generate go run ../generator/generator.go CommitOptions
 // CommitOptions describe details about the resulting committed
 // image as defined by repo and tag. None of these options
 // are required.
-//
-//go:generate go run ../generator/generator.go CommitOptions
 type CommitOptions struct {
 	Author  *string
 	Changes []string
 	Comment *string
 	Format  *string
 	Pause   *bool
-	Stream  *bool
 	Squash  *bool
 	Repo    *string
 	Tag     *string
 }
 
-// AttachOptions are optional options for attaching to containers
-//
 //go:generate go run ../generator/generator.go AttachOptions
+// AttachOptions are optional options for attaching to containers
 type AttachOptions struct {
 	DetachKeys *string // Keys to detach from running container
 	Logs       *bool   // Flag to return all logs from container when true
 	Stream     *bool   // Flag only return container logs when false and Logs is true
 }
 
-// CheckpointOptions are optional options for checkpointing containers
-//
 //go:generate go run ../generator/generator.go CheckpointOptions
+// CheckpointOptions are optional options for checkpointing containers
 type CheckpointOptions struct {
 	Export         *string
 	CreateImage    *string
@@ -63,9 +58,8 @@ type CheckpointOptions struct {
 	FileLocks      *bool
 }
 
-// RestoreOptions are optional options for restoring containers
-//
 //go:generate go run ../generator/generator.go RestoreOptions
+// RestoreOptions are optional options for restoring containers
 type RestoreOptions struct {
 	IgnoreRootfs    *bool
 	IgnoreVolumes   *bool
@@ -88,14 +82,12 @@ type RestoreOptions struct {
 	FileLocks      *bool
 }
 
-// CreateOptions are optional options for creating containers
-//
 //go:generate go run ../generator/generator.go CreateOptions
+// CreateOptions are optional options for creating containers
 type CreateOptions struct{}
 
-// DiffOptions are optional options for creating containers
-//
 //go:generate go run ../generator/generator.go DiffOptions
+// DiffOptions are optional options for creating containers
 type DiffOptions struct {
 	// By the default diff will compare against the parent layer. Change the Parent if you want to compare against something else.
 	Parent *string
@@ -103,46 +95,39 @@ type DiffOptions struct {
 	DiffType *string
 }
 
+//go:generate go run ../generator/generator.go ExecInspectOptions
 // ExecInspectOptions are optional options for inspecting
 // exec sessions
-//
-//go:generate go run ../generator/generator.go ExecInspectOptions
 type ExecInspectOptions struct{}
 
+//go:generate go run ../generator/generator.go ExecStartOptions
 // ExecStartOptions are optional options for starting
 // exec sessions
-//
-//go:generate go run ../generator/generator.go ExecStartOptions
 type ExecStartOptions struct {
 }
 
+//go:generate go run ../generator/generator.go HealthCheckOptions
 // HealthCheckOptions are optional options for checking
 // the health of a container
-//
-//go:generate go run ../generator/generator.go HealthCheckOptions
 type HealthCheckOptions struct{}
 
+//go:generate go run ../generator/generator.go MountOptions
 // MountOptions are optional options for mounting
 // containers
-//
-//go:generate go run ../generator/generator.go MountOptions
 type MountOptions struct{}
 
+//go:generate go run ../generator/generator.go UnmountOptions
 // UnmountOptions are optional options for unmounting
 // containers
-//
-//go:generate go run ../generator/generator.go UnmountOptions
 type UnmountOptions struct{}
 
+//go:generate go run ../generator/generator.go MountedContainerPathsOptions
 // MountedContainerPathsOptions are optional options for getting
 // container mount paths
-//
-//go:generate go run ../generator/generator.go MountedContainerPathsOptions
 type MountedContainerPathsOptions struct{}
 
-// ListOptions are optional options for listing containers
-//
 //go:generate go run ../generator/generator.go ListOptions
+// ListOptions are optional options for listing containers
 type ListOptions struct {
 	All       *bool
 	External  *bool
@@ -153,16 +138,14 @@ type ListOptions struct {
 	Sync      *bool
 }
 
-// PruneOptions are optional options for pruning containers
-//
 //go:generate go run ../generator/generator.go PruneOptions
+// PruneOptions are optional options for pruning containers
 type PruneOptions struct {
 	Filters map[string][]string
 }
 
-// RemoveOptions are optional options for removing containers
-//
 //go:generate go run ../generator/generator.go RemoveOptions
+// RemoveOptions are optional options for removing containers
 type RemoveOptions struct {
 	Depend  *bool
 	Ignore  *bool
@@ -171,135 +154,111 @@ type RemoveOptions struct {
 	Timeout *uint
 }
 
-// InspectOptions are optional options for inspecting containers
-//
 //go:generate go run ../generator/generator.go InspectOptions
+// InspectOptions are optional options for inspecting containers
 type InspectOptions struct {
 	Size *bool
 }
 
-// KillOptions are optional options for killing containers
-//
 //go:generate go run ../generator/generator.go KillOptions
+// KillOptions are optional options for killing containers
 type KillOptions struct {
 	Signal *string
 }
 
-// PauseOptions are optional options for pausing containers
-//
 //go:generate go run ../generator/generator.go PauseOptions
+// PauseOptions are optional options for pausing containers
 type PauseOptions struct{}
 
-// RestartOptions are optional options for restarting containers
-//
 //go:generate go run ../generator/generator.go RestartOptions
+// RestartOptions are optional options for restarting containers
 type RestartOptions struct {
 	Timeout *int
 }
 
-// StartOptions are optional options for starting containers
-//
 //go:generate go run ../generator/generator.go StartOptions
+// StartOptions are optional options for starting containers
 type StartOptions struct {
 	DetachKeys *string
 	Recursive  *bool
 }
 
-// StatsOptions are optional options for getting stats on containers
-//
 //go:generate go run ../generator/generator.go StatsOptions
+// StatsOptions are optional options for getting stats on containers
 type StatsOptions struct {
-	All      *bool
 	Stream   *bool
 	Interval *int
 }
 
+//go:generate go run ../generator/generator.go TopOptions
 // TopOptions are optional options for getting running
 // processes in containers
-//
-//go:generate go run ../generator/generator.go TopOptions
 type TopOptions struct {
 	Descriptors *[]string
 }
 
-// UnpauseOptions are optional options for unpausing containers
-//
 //go:generate go run ../generator/generator.go UnpauseOptions
+// UnpauseOptions are optional options for unpausing containers
 type UnpauseOptions struct{}
 
-// WaitOptions are optional options for waiting on containers
-//
 //go:generate go run ../generator/generator.go WaitOptions
+// WaitOptions are optional options for waiting on containers
 type WaitOptions struct {
-	// Conditions to wait on.  Includes container statuses such as
-	// "running" or "stopped" and health-related values such "healthy".
-	Conditions []string `schema:"condition"`
-	// Time interval to wait before polling for completion.
-	Interval *string
-	// Container status to wait on.
-	// Deprecated: use Conditions instead.
 	Condition []define.ContainerStatus
+	Interval  *string
 }
 
-// StopOptions are optional options for stopping containers
-//
 //go:generate go run ../generator/generator.go StopOptions
+// StopOptions are optional options for stopping containers
 type StopOptions struct {
 	Ignore  *bool
 	Timeout *uint
 }
 
-// ExportOptions are optional options for exporting containers
-//
 //go:generate go run ../generator/generator.go ExportOptions
+// ExportOptions are optional options for exporting containers
 type ExportOptions struct{}
 
-// InitOptions are optional options for initing containers
-//
 //go:generate go run ../generator/generator.go InitOptions
+// InitOptions are optional options for initing containers
 type InitOptions struct{}
 
-// ShouldRestartOptions
-//
 //go:generate go run ../generator/generator.go ShouldRestartOptions
+// ShouldRestartOptions
 type ShouldRestartOptions struct{}
 
+//go:generate go run ../generator/generator.go RenameOptions
 // RenameOptions are options for renaming containers.
 // The Name field is required.
-//
-//go:generate go run ../generator/generator.go RenameOptions
 type RenameOptions struct {
 	Name *string
 }
 
+//go:generate go run ../generator/generator.go ResizeTTYOptions
 // ResizeTTYOptions are optional options for resizing
 // container TTYs
-//
-//go:generate go run ../generator/generator.go ResizeTTYOptions
 type ResizeTTYOptions struct {
 	Height  *int
 	Width   *int
 	Running *bool
 }
 
+//go:generate go run ../generator/generator.go ResizeExecTTYOptions
 // ResizeExecTTYOptions are optional options for resizing
 // container ExecTTYs
-//
-//go:generate go run ../generator/generator.go ResizeExecTTYOptions
 type ResizeExecTTYOptions struct {
 	Height *int
 	Width  *int
 }
 
+//go:generate go run ../generator/generator.go ExecStartAndAttachOptions
 // ExecStartAndAttachOptions are optional options for resizing
 // container ExecTTYs
-//
-//go:generate go run ../generator/generator.go ExecStartAndAttachOptions
 type ExecStartAndAttachOptions struct {
 	// OutputStream will be attached to container's STDOUT
-	OutputStream *io.Writer
+	OutputStream *io.WriteCloser
 	// ErrorStream will be attached to container's STDERR
-	ErrorStream *io.Writer
+	ErrorStream *io.WriteCloser
 	// InputStream will be attached to container's STDIN
 	InputStream *bufio.Reader
 	// AttachOutput is whether to attach to STDOUT
@@ -313,17 +272,15 @@ type ExecStartAndAttachOptions struct {
 	AttachInput *bool
 }
 
-// ExistsOptions are optional options for checking if a container exists
-//
 //go:generate go run ../generator/generator.go ExistsOptions
+// ExistsOptions are optional options for checking if a container exists
 type ExistsOptions struct {
 	// External checks for containers created outside of Podman
 	External *bool
 }
 
-// CopyOptions are options for copying to containers.
-//
 //go:generate go run ../generator/generator.go CopyOptions
+// CopyOptions are options for copying to containers.
 type CopyOptions struct {
 	// If used with CopyFromArchive and set to true it will change ownership of files from the source tar archive
 	// to the primary uid/gid of the target container.
@@ -333,11 +290,4 @@ type CopyOptions struct {
 	// NoOverwriteDirNonDir when true prevents an existing directory or file from being overwritten
 	// by the other type.
 	NoOverwriteDirNonDir *bool
-}
-
-// ExecRemoveOptions are optional options for removing an exec session
-//
-//go:generate go run ../generator/generator.go ExecRemoveOptions
-type ExecRemoveOptions struct {
-	Force *bool
 }

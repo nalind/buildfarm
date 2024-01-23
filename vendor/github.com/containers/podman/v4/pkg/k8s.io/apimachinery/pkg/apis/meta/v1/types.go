@@ -17,11 +17,10 @@ limitations under the License.
 // Package v1 contains API types that are common to all versions.
 //
 // The package contains two categories of types:
-//   - external (serialized) types that lack their own version (e.g TypeMeta)
-//   - internal (never-serialized) types that are needed by several different
-//     api groups, and so live here, to avoid duplication and/or import loops
-//     (e.g. LabelSelector).
-//
+// - external (serialized) types that lack their own version (e.g TypeMeta)
+// - internal (never-serialized) types that are needed by several different
+//   api groups, and so live here, to avoid duplication and/or import loops
+//   (e.g. LabelSelector).
 // In the future, we will probably move these categories of objects into
 // separate packages.
 package v1
@@ -929,18 +928,6 @@ const (
 	CauseTypeResourceVersionTooLarge CauseType = "ResourceVersionTooLarge"
 )
 
-// List holds a list of objects, which may not be known by the server.
-type List struct {
-	TypeMeta `json:",inline"`
-	// Standard list metadata.
-	// More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-	// +optional
-	ListMeta `json:"metadata,omitempty"`
-
-	// List of objects
-	Items []interface{} `json:"items"`
-}
-
 // APIVersions lists the versions that are available, to allow clients to
 // discover the API at /api, which is the root path of the legacy v1 API.
 //
@@ -1202,7 +1189,7 @@ const (
 // or a string representing a sub-field or item. The string will follow one of these four formats:
 // 'f:<name>', where <name> is the name of a field in a struct, or key in a map
 // 'v:<value>', where <value> is the exact json formatted value of a list item
-// 'i:<index>', where <index> is position of an item in a list
+// 'i:<index>', where <index> is position of a item in a list
 // 'k:<keys>', where <keys> is a map of  a list item's key fields to their unique values
 // If a key maps to an empty Fields value, the field that key represents is part of the set.
 //
@@ -1285,18 +1272,17 @@ type PartialObjectMetadataList struct {
 // Condition contains details for one aspect of the current state of this API Resource.
 // ---
 // This struct is intended for direct use as an array at the field path .status.conditions.  For example,
+// type FooStatus struct{
+//     // Represents the observations of a foo's current state.
+//     // Known .status.conditions.type are: "Available", "Progressing", and "Degraded"
+//     // +patchMergeKey=type
+//     // +patchStrategy=merge
+//     // +listType=map
+//     // +listMapKey=type
+//     Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 //
-//	type FooStatus struct{
-//	    // Represents the observations of a foo's current state.
-//	    // Known .status.conditions.type are: "Available", "Progressing", and "Degraded"
-//	    // +patchMergeKey=type
-//	    // +patchStrategy=merge
-//	    // +listType=map
-//	    // +listMapKey=type
-//	    Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
-//
-//	    // other fields
-//	}
+//     // other fields
+// }
 type Condition struct {
 	// type of condition in CamelCase or in foo.example.com/CamelCase.
 	// ---

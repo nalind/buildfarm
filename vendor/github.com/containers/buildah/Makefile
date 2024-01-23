@@ -1,7 +1,7 @@
 export GOPROXY=https://proxy.golang.org
 
 APPARMORTAG := $(shell hack/apparmor_tag.sh)
-STORAGETAGS := exclude_graphdriver_devicemapper $(shell ./btrfs_tag.sh) $(shell ./btrfs_installed_tag.sh) $(shell ./hack/libsubid_tag.sh)
+STORAGETAGS := $(shell ./btrfs_tag.sh) $(shell ./btrfs_installed_tag.sh) $(shell ./libdm_tag.sh) $(shell ./hack/libsubid_tag.sh)
 SECURITYTAGS ?= seccomp $(APPARMORTAG)
 TAGS ?= $(SECURITYTAGS) $(STORAGETAGS) $(shell ./hack/systemd_tag.sh)
 BUILDTAGS += $(TAGS)
@@ -14,8 +14,10 @@ BUILDAH := buildah
 GO := go
 GO_LDFLAGS := $(shell if $(GO) version|grep -q gccgo; then echo "-gccgoflags"; else echo "-ldflags"; fi)
 GO_GCFLAGS := $(shell if $(GO) version|grep -q gccgo; then echo "-gccgoflags"; else echo "-gcflags"; fi)
+GO110 := 1.10
+GOVERSION := $(findstring $(GO110),$(shell go version))
 # test for go module support
-ifeq ($(shell $(GO) help mod >/dev/null 2>&1 && echo true), true)
+ifeq ($(shell go help mod >/dev/null 2>&1 && echo true), true)
 export GO_BUILD=GO111MODULE=on $(GO) build -mod=vendor
 export GO_TEST=GO111MODULE=on $(GO) test -mod=vendor
 else
@@ -27,19 +29,16 @@ RACEFLAGS := $(shell $(GO_TEST) -race ./pkg/dummy > /dev/null 2>&1 && echo -race
 COMMIT_NO ?= $(shell git rev-parse HEAD 2> /dev/null || true)
 GIT_COMMIT ?= $(if $(shell git status --porcelain --untracked-files=no),${COMMIT_NO}-dirty,${COMMIT_NO})
 SOURCE_DATE_EPOCH ?= $(if $(shell date +%s),$(shell date +%s),$(error "date failed"))
-STATIC_STORAGETAGS = "containers_image_openpgp $(STORAGE_TAGS)"
+STATIC_STORAGETAGS = "containers_image_openpgp exclude_graphdriver_devicemapper $(STORAGE_TAGS)"
 
-# we get GNU make 3.x in MacOS build envs, which wants # to be escaped in
-# strings, while the 4.x we have on Linux doesn't. this is the documented
-# workaround
-COMMENT := \#
-CNI_COMMIT := $(shell sed -n 's;^$(COMMENT) github.com/containernetworking/cni \([^ \n]*\).*$$;\1;p' vendor/modules.txt)
-RUNC_COMMIT := $(shell sed -n 's;^$(COMMENT) github.com/opencontainers/runc \([^ \n]*\).*$$;\1;p' vendor/modules.txt)
+CNI_COMMIT := $(shell sed -n 's;\tgithub.com/containernetworking/cni \([^ \n]*\).*$\;\1;p' go.mod)
+#RUNC_COMMIT := $(shell sed -n 's;\tgithub.com/opencontainers/runc \([^ \n]*\).*$\;\1;p' go.mod)
+RUNC_COMMIT := v1.0.0-rc8
 LIBSECCOMP_COMMIT := release-2.3
 
 EXTRA_LDFLAGS ?=
 BUILDAH_LDFLAGS := $(GO_LDFLAGS) '-X main.GitCommit=$(GIT_COMMIT) -X main.buildInfo=$(SOURCE_DATE_EPOCH) -X main.cniVersion=$(CNI_COMMIT) $(EXTRA_LDFLAGS)'
-SOURCES=*.go imagebuildah/*.go bind/*.go chroot/*.go copier/*.go define/*.go docker/*.go internal/config/*.go internal/mkcw/*.go internal/mkcw/types/*.go internal/parse/*.go internal/source/*.go internal/util/*.go manifests/*.go pkg/chrootuser/*.go pkg/cli/*.go pkg/completion/*.go pkg/formats/*.go pkg/overlay/*.go pkg/parse/*.go pkg/rusage/*.go pkg/sshagent/*.go pkg/umask/*.go pkg/util/*.go util/*.go
+SOURCES=*.go imagebuildah/*.go bind/*.go chroot/*.go copier/*.go define/*.go docker/*.go internal/parse/*.go internal/source/*.go internal/util/*.go manifests/*.go pkg/chrootuser/*.go pkg/cli/*.go pkg/completion/*.go pkg/formats/*.go pkg/overlay/*.go pkg/parse/*.go pkg/rusage/*.go pkg/sshagent/*.go pkg/umask/*.go pkg/util/*.go util/*.go
 
 LINTFLAGS ?=
 
@@ -69,26 +68,14 @@ static:
 	mkdir -p ./bin
 	cp -rfp ./result/bin/* ./bin/
 
-bin/buildah: $(SOURCES) cmd/buildah/*.go internal/mkcw/embed/entrypoint.gz
+bin/buildah: $(SOURCES) cmd/buildah/*.go
 	$(GO_BUILD) $(BUILDAH_LDFLAGS) $(GO_GCFLAGS) "$(GOGCFLAGS)" -o $@ $(BUILDFLAGS) ./cmd/buildah
-
-ifneq ($(shell as --version | grep x86_64),)
-internal/mkcw/embed/entrypoint: internal/mkcw/embed/entrypoint.s
-	$(AS) -o $(patsubst %.s,%.o,$^) $^
-	$(LD) -o $@ $(patsubst %.s,%.o,$^)
-	strip $@
-else
-.PHONY: internal/mkcw/embed/entrypoint
-endif
-
-internal/mkcw/embed/entrypoint.gz: internal/mkcw/embed/entrypoint
-	$(RM) $@
-	gzip -k $^
 
 .PHONY: buildah
 buildah: bin/buildah
 
-ALL_CROSS_TARGETS := $(addprefix bin/buildah.,$(subst /,.,$(shell $(GO) tool dist list)))
+# TODO: remove `grep -v loong64` from `ALL_CROSS_TARGETS` once go.etcd.io/bbolt 1.3.7 is out.
+ALL_CROSS_TARGETS := $(addprefix bin/buildah.,$(subst /,.,$(shell $(GO) tool dist list | grep -v loong64)))
 LINUX_CROSS_TARGETS := $(filter bin/buildah.linux.%,$(ALL_CROSS_TARGETS))
 DARWIN_CROSS_TARGETS := $(filter bin/buildah.darwin.%,$(ALL_CROSS_TARGETS))
 WINDOWS_CROSS_TARGETS := $(addsuffix .exe,$(filter bin/buildah.windows.%,$(ALL_CROSS_TARGETS)))
@@ -125,7 +112,7 @@ gopath:
 	test $(shell pwd) = $(shell cd ../../../../src/github.com/containers/buildah ; pwd)
 
 codespell:
-	codespell -S Makefile,buildah.spec.rpkg,AUTHORS,bin,vendor,.git,go.mod,go.sum,CHANGELOG.md,changelog.txt,seccomp.json,.cirrus.yml,"*.xz,*.gz,*.tar,*.tgz,*ico,*.png,*.1,*.5,*.orig,*.rej" -L passt,bu,uint,iff,od,erro -w
+	codespell -S Makefile,buildah.spec.rpkg,AUTHORS,bin,vendor,.git,go.mod,go.sum,CHANGELOG.md,changelog.txt,seccomp.json,.cirrus.yml,"*.xz,*.gz,*.tar,*.tgz,*ico,*.png,*.1,*.5,*.orig,*.rej" -L uint,iff,od,ERRO -w
 
 .PHONY: validate
 validate: install.tools
@@ -135,7 +122,7 @@ validate: install.tools
 
 .PHONY: install.tools
 install.tools:
-	$(MAKE) -C tests/tools
+	make -C tests/tools
 
 .PHONY: runc
 runc: gopath
@@ -158,8 +145,7 @@ install.cni.sudo: gopath
 
 .PHONY: install
 install:
-	install -d -m 755 $(DESTDIR)/$(BINDIR)
-	install -m 755 bin/buildah $(DESTDIR)/$(BINDIR)/buildah
+	install -D -m0755 bin/buildah $(DESTDIR)/$(BINDIR)/buildah
 	$(MAKE) -C docs install
 
 .PHONY: uninstall
@@ -170,8 +156,7 @@ uninstall:
 
 .PHONY: install.completions
 install.completions:
-	install -m 755 -d $(DESTDIR)/$(BASHINSTALLDIR)
-	install -m 644 contrib/completions/bash/buildah $(DESTDIR)/$(BASHINSTALLDIR)/buildah
+	install -m 644 -D contrib/completions/bash/buildah $(DESTDIR)/$(BASHINSTALLDIR)/buildah
 
 .PHONY: install.runc
 install.runc:
@@ -179,7 +164,7 @@ install.runc:
 
 .PHONY: test-conformance
 test-conformance:
-	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)" -cover -timeout 60m ./tests/conformance
+	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)" -cover -timeout 20m ./tests/conformance
 
 .PHONY: test-integration
 test-integration: install.tools
@@ -191,14 +176,13 @@ tests/testreport/testreport: tests/testreport/testreport.go
 
 .PHONY: test-unit
 test-unit: tests/testreport/testreport
-	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)" -cover $(RACEFLAGS) $(shell $(GO) list ./... | grep -v vendor | grep -v tests | grep -v cmd | grep -v chroot | grep -v copier) -timeout 45m
-	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)"        $(RACEFLAGS) ./chroot ./copier -timeout 60m
+	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)" -cover $(RACEFLAGS) $(shell $(GO) list ./... | grep -v vendor | grep -v tests | grep -v cmd) -timeout 45m
 	tmp=$(shell mktemp -d) ; \
 	mkdir -p $$tmp/root $$tmp/runroot; \
 	$(GO_TEST) -v -tags "$(STORAGETAGS) $(SECURITYTAGS)" -cover $(RACEFLAGS) ./cmd/buildah -args --root $$tmp/root --runroot $$tmp/runroot --storage-driver vfs --signature-policy $(shell pwd)/tests/policy.json --registries-conf $(shell pwd)/tests/registries.conf
 
 vendor-in-container:
-	podman run --privileged --rm --env HOME=/root -v `pwd`:/src -w /src docker.io/library/golang:1.20 make vendor
+	podman run --privileged --rm --env HOME=/root -v `pwd`:/src -w /src docker.io/library/golang:1.17 make vendor
 
 .PHONY: vendor
 vendor:

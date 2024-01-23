@@ -17,7 +17,6 @@ import (
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/podman/v4/version"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/net/proxy"
 )
 
 type APIResponse struct {
@@ -36,22 +35,6 @@ const (
 	clientKey  = valueKey("Client")
 	versionKey = valueKey("ServiceVersion")
 )
-
-type ConnectError struct {
-	Err error
-}
-
-func (c ConnectError) Error() string {
-	return "unable to connect to Podman socket: " + c.Err.Error()
-}
-
-func (c ConnectError) Unwrap() error {
-	return c.Err
-}
-
-func newConnectError(err error) error {
-	return ConnectError{Err: err}
-}
 
 // GetClient from context build by NewConnection()
 func GetClient(ctx context.Context) (*Connection, error) {
@@ -76,7 +59,7 @@ func JoinURL(elements ...string) string {
 
 // NewConnection creates a new service connection without an identity
 func NewConnection(ctx context.Context, uri string) (context.Context, error) {
-	return NewConnectionWithIdentity(ctx, uri, "", false)
+	return NewConnectionWithIdentity(ctx, uri, "")
 }
 
 // NewConnectionWithIdentity takes a URI as a string and returns a context with the
@@ -87,7 +70,7 @@ func NewConnection(ctx context.Context, uri string) (context.Context, error) {
 // For example tcp://localhost:<port>
 // or unix:///run/podman/podman.sock
 // or ssh://<user>@<host>[:port]/run/podman/podman.sock?secure=True
-func NewConnectionWithIdentity(ctx context.Context, uri string, identity string, machine bool) (context.Context, error) {
+func NewConnectionWithIdentity(ctx context.Context, uri string, identity string) (context.Context, error) {
 	var (
 		err error
 	)
@@ -108,22 +91,18 @@ func NewConnectionWithIdentity(ctx context.Context, uri string, identity string,
 	var connection Connection
 	switch _url.Scheme {
 	case "ssh":
-		port := 22
-		if _url.Port() != "" {
-			port, err = strconv.Atoi(_url.Port())
-			if err != nil {
-				return nil, err
-			}
+		port, err := strconv.Atoi(_url.Port())
+		if err != nil {
+			return nil, err
 		}
 		conn, err := ssh.Dial(&ssh.ConnectionDialOptions{
-			Host:                        uri,
-			Identity:                    identity,
-			User:                        _url.User,
-			Port:                        port,
-			InsecureIsMachineConnection: machine,
+			Host:     uri,
+			Identity: identity,
+			User:     _url.User,
+			Port:     port,
 		}, "golang")
 		if err != nil {
-			return nil, newConnectError(err)
+			return nil, err
 		}
 		connection = Connection{URI: _url}
 		connection.Client = &http.Client{
@@ -143,63 +122,36 @@ func NewConnectionWithIdentity(ctx context.Context, uri string, identity string,
 		if !strings.HasPrefix(uri, "tcp://") {
 			return nil, errors.New("tcp URIs should begin with tcp://")
 		}
-		conn, err := tcpClient(_url)
-		if err != nil {
-			return nil, newConnectError(err)
-		}
-		connection = conn
+		connection = tcpClient(_url)
 	default:
 		return nil, fmt.Errorf("unable to create connection. %q is not a supported schema", _url.Scheme)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unable to connect to Podman. failed to create %sClient: %w", _url.Scheme, err)
 	}
 
 	ctx = context.WithValue(ctx, clientKey, &connection)
 	serviceVersion, err := pingNewConnection(ctx)
 	if err != nil {
-		return nil, newConnectError(err)
+		return nil, fmt.Errorf("unable to connect to Podman socket: %w", err)
 	}
 	ctx = context.WithValue(ctx, versionKey, serviceVersion)
 	return ctx, nil
 }
 
-func tcpClient(_url *url.URL) (Connection, error) {
+func tcpClient(_url *url.URL) Connection {
 	connection := Connection{
 		URI: _url,
 	}
-	dialContext := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return net.Dial("tcp", _url.Host)
-	}
-	// use proxy if env `CONTAINER_PROXY` set
-	if proxyURI, found := os.LookupEnv("CONTAINER_PROXY"); found {
-		proxyURL, err := url.Parse(proxyURI)
-		if err != nil {
-			return connection, fmt.Errorf("value of CONTAINER_PROXY is not a valid url: %s: %w", proxyURI, err)
-		}
-		proxyDialer, err := proxy.FromURL(proxyURL, proxy.Direct)
-		if err != nil {
-			return connection, fmt.Errorf("unable to dial to proxy %s, %w", proxyURI, err)
-		}
-		dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-			logrus.Debugf("use proxy %s, but proxy dialer does not support dial timeout", proxyURI)
-			return proxyDialer.Dial("tcp", _url.Host)
-		}
-		if f, ok := proxyDialer.(proxy.ContextDialer); ok {
-			dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-				// the default tcp dial timeout seems to be 75s, podman-remote will retry 3 times before exit.
-				// here we change proxy dial timeout to 3s
-				logrus.Debugf("use proxy %s with dial timeout 3s", proxyURI)
-				ctx, cancel := context.WithTimeout(ctx, time.Second*3)
-				defer cancel() // It's safe to cancel, `f.DialContext` only use ctx for returning the Conn, not the lifetime of the Conn.
-				return f.DialContext(ctx, "tcp", _url.Host)
-			}
-		}
-	}
 	connection.Client = &http.Client{
 		Transport: &http.Transport{
-			DialContext:        dialContext,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return net.Dial("tcp", _url.Host)
+			},
 			DisableCompression: true,
 		},
 	}
-	return connection, nil
+	return connection
 }
 
 // pingNewConnection pings to make sure the RESTFUL service is up

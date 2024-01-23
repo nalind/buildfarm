@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/common/pkg/detach"
+	"github.com/containers/common/pkg/util"
 )
 
 var (
@@ -93,7 +93,7 @@ var (
 
 	// ErrDetach indicates that an attach session was manually detached by
 	// the user.
-	ErrDetach = detach.ErrDetach
+	ErrDetach = util.ErrDetach
 
 	// ErrWillDeadlock indicates that the requested operation will cause a
 	// deadlock. This is usually caused by upgrade issues, and is resolved
@@ -211,8 +211,4 @@ var (
 	// ErrConmonVersionFormat is used when the expected version format of conmon
 	// has changed.
 	ErrConmonVersionFormat = "conmon version changed format"
-
-	// ErrRemovingCtrs indicates that there was an error removing all
-	// containers from a pod.
-	ErrRemovingCtrs = errors.New("removing pod containers")
 )

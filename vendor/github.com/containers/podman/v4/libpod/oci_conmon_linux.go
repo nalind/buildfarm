@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -136,7 +133,8 @@ func (r *ConmonOCIRuntime) moveConmonToCgroupAndSignal(ctr *Container, cmd *exec
 		// there are only 2 valid cgroup managers
 		cgroupParent := ctr.CgroupParent()
 		cgroupPath := filepath.Join(ctr.config.CgroupParent, "conmon")
-		cgroupResources, err := GetLimits(ctr.LinuxResources())
+		Resource := ctr.Spec().Linux.Resources
+		cgroupResources, err := GetLimits(Resource)
 		if err != nil {
 			logrus.StandardLogger().Log(logLevel, "Could not get ctr resources")
 		}
@@ -165,7 +163,10 @@ func (r *ConmonOCIRuntime) moveConmonToCgroupAndSignal(ctr *Container, cmd *exec
 	}
 
 	/* We set the cgroup, now the child can start creating children */
-	return writeConmonPipeData(startFd)
+	if err := writeConmonPipeData(startFd); err != nil {
+		return err
+	}
+	return nil
 }
 
 // GetLimits converts spec resource limits to cgroup consumable limits
@@ -267,25 +268,49 @@ func GetLimits(resource *spec.LinuxResources) (runcconfig.Resources, error) {
 	if resource.BlockIO != nil {
 		if len(resource.BlockIO.ThrottleReadBpsDevice) > 0 {
 			for _, entry := range resource.BlockIO.ThrottleReadBpsDevice {
-				throttle := runcconfig.NewThrottleDevice(entry.Major, entry.Minor, entry.Rate)
+				throttle := &runcconfig.ThrottleDevice{}
+				dev := &runcconfig.BlockIODevice{
+					Major: entry.Major,
+					Minor: entry.Minor,
+				}
+				throttle.BlockIODevice = *dev
+				throttle.Rate = entry.Rate
 				final.BlkioThrottleReadBpsDevice = append(final.BlkioThrottleReadBpsDevice, throttle)
 			}
 		}
 		if len(resource.BlockIO.ThrottleWriteBpsDevice) > 0 {
 			for _, entry := range resource.BlockIO.ThrottleWriteBpsDevice {
-				throttle := runcconfig.NewThrottleDevice(entry.Major, entry.Minor, entry.Rate)
+				throttle := &runcconfig.ThrottleDevice{}
+				dev := &runcconfig.BlockIODevice{
+					Major: entry.Major,
+					Minor: entry.Minor,
+				}
+				throttle.BlockIODevice = *dev
+				throttle.Rate = entry.Rate
 				final.BlkioThrottleWriteBpsDevice = append(final.BlkioThrottleWriteBpsDevice, throttle)
 			}
 		}
 		if len(resource.BlockIO.ThrottleReadIOPSDevice) > 0 {
 			for _, entry := range resource.BlockIO.ThrottleReadIOPSDevice {
-				throttle := runcconfig.NewThrottleDevice(entry.Major, entry.Minor, entry.Rate)
+				throttle := &runcconfig.ThrottleDevice{}
+				dev := &runcconfig.BlockIODevice{
+					Major: entry.Major,
+					Minor: entry.Minor,
+				}
+				throttle.BlockIODevice = *dev
+				throttle.Rate = entry.Rate
 				final.BlkioThrottleReadIOPSDevice = append(final.BlkioThrottleReadIOPSDevice, throttle)
 			}
 		}
 		if len(resource.BlockIO.ThrottleWriteIOPSDevice) > 0 {
 			for _, entry := range resource.BlockIO.ThrottleWriteIOPSDevice {
-				throttle := runcconfig.NewThrottleDevice(entry.Major, entry.Minor, entry.Rate)
+				throttle := &runcconfig.ThrottleDevice{}
+				dev := &runcconfig.BlockIODevice{
+					Major: entry.Major,
+					Minor: entry.Minor,
+				}
+				throttle.BlockIODevice = *dev
+				throttle.Rate = entry.Rate
 				final.BlkioThrottleWriteIOPSDevice = append(final.BlkioThrottleWriteIOPSDevice, throttle)
 			}
 		}
@@ -297,14 +322,18 @@ func GetLimits(resource *spec.LinuxResources) (runcconfig.Resources, error) {
 		}
 		if len(resource.BlockIO.WeightDevice) > 0 {
 			for _, entry := range resource.BlockIO.WeightDevice {
-				var w, lw uint16
+				weight := &runcconfig.WeightDevice{}
+				dev := &runcconfig.BlockIODevice{
+					Major: entry.Major,
+					Minor: entry.Minor,
+				}
 				if entry.Weight != nil {
-					w = *entry.Weight
+					weight.Weight = *entry.Weight
 				}
 				if entry.LeafWeight != nil {
-					lw = *entry.LeafWeight
+					weight.LeafWeight = *entry.LeafWeight
 				}
-				weight := runcconfig.NewWeightDevice(entry.Major, entry.Minor, w, lw)
+				weight.BlockIODevice = *dev
 				final.BlkioWeightDevice = append(final.BlkioWeightDevice, weight)
 			}
 		}
@@ -324,5 +353,6 @@ func GetLimits(resource *spec.LinuxResources) (runcconfig.Resources, error) {
 
 	// Unified state
 	final.Unified = resource.Unified
+
 	return *final, nil
 }

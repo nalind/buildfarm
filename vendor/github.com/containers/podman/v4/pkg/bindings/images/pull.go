@@ -69,7 +69,6 @@ func Pull(ctx context.Context, rawImage string, options *PullOptions) ([]string,
 	dec := json.NewDecoder(response.Body)
 	var images []string
 	var pullErrors []error
-LOOP:
 	for {
 		var report entities.ImagePullReport
 		if err := dec.Decode(&report); err != nil {
@@ -81,7 +80,7 @@ LOOP:
 
 		select {
 		case <-response.Request.Context().Done():
-			break LOOP
+			break
 		default:
 			// non-blocking select
 		}

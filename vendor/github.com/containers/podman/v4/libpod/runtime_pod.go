@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -30,16 +27,16 @@ type PodFilter func(*Pod) bool
 // If force is specified with removeCtrs, all containers will be stopped before
 // being removed
 // Otherwise, the pod will not be removed if any containers are running
-func (r *Runtime) RemovePod(ctx context.Context, p *Pod, removeCtrs, force bool, timeout *uint) (map[string]error, error) {
+func (r *Runtime) RemovePod(ctx context.Context, p *Pod, removeCtrs, force bool, timeout *uint) error {
 	if !r.valid {
-		return nil, define.ErrRuntimeStopped
+		return define.ErrRuntimeStopped
 	}
 
 	if !p.valid {
 		if ok, _ := r.state.HasPod(p.ID()); !ok {
 			// Pod probably already removed
 			// Or was never in the runtime to begin with
-			return make(map[string]error), nil
+			return nil
 		}
 	}
 
@@ -183,7 +180,7 @@ func (r *Runtime) PrunePods(ctx context.Context) (map[string]error, error) {
 	}
 	for _, pod := range pods {
 		var timeout *uint
-		_, err := r.removePod(context.TODO(), pod, true, false, timeout)
+		err := r.removePod(context.TODO(), pod, true, false, timeout)
 		response[pod.ID()] = err
 	}
 	return response, nil

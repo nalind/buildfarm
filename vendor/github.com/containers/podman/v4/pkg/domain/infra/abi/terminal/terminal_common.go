@@ -49,8 +49,7 @@ func StartAttachCtr(ctx context.Context, ctr *libpod.Container, stdout, stderr, 
 
 	// Check if we are attached to a terminal. If we are, generate resize
 	// events, and set the terminal to raw mode
-
-	if haveTerminal && ctr.Terminal() {
+	if haveTerminal && ctr.Spec().Process.Terminal {
 		cancel, oldTermState, err := handleTerminalAttach(ctx, resize)
 		if err != nil {
 			return err
@@ -84,19 +83,21 @@ func StartAttachCtr(ctx context.Context, ctr *libpod.Container, stdout, stderr, 
 		streams.AttachInput = false
 	}
 
-	if sigProxy {
-		// To prevent a race condition, install the signal handler
-		// before starting/attaching to the container.
-		ProxySignals(ctr)
-	}
-
 	if !startContainer {
+		if sigProxy {
+			ProxySignals(ctr)
+		}
+
 		return ctr.Attach(streams, detachKeys, resize)
 	}
 
 	attachChan, err := ctr.StartAndAttach(ctx, streams, detachKeys, resize, true)
 	if err != nil {
 		return err
+	}
+
+	if sigProxy {
+		ProxySignals(ctr)
 	}
 
 	if stdout == nil && stderr == nil {

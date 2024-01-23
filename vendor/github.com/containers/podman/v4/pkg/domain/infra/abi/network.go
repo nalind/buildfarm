@@ -13,17 +13,6 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
-func (ic *ContainerEngine) NetworkUpdate(ctx context.Context, netName string, options entities.NetworkUpdateOptions) error {
-	var networkUpdateOptions types.NetworkUpdateOptions
-	networkUpdateOptions.AddDNSServers = options.AddDNSServers
-	networkUpdateOptions.RemoveDNSServers = options.RemoveDNSServers
-	err := ic.Libpod.Network().NetworkUpdate(netName, networkUpdateOptions)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (ic *ContainerEngine) NetworkList(ctx context.Context, options entities.NetworkListOptions) ([]types.Network, error) {
 	// dangling filter is not provided by netutil
 	var wantDangling bool
@@ -81,13 +70,13 @@ func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []stri
 }
 
 func (ic *ContainerEngine) NetworkReload(ctx context.Context, names []string, options entities.NetworkReloadOptions) ([]*entities.NetworkReloadReport, error) {
-	containers, err := getContainers(ic.Libpod, getContainersOptions{all: options.All, latest: options.Latest, names: names})
+	ctrs, err := getContainersByContext(options.All, options.Latest, names, ic.Libpod)
 	if err != nil {
 		return nil, err
 	}
 
-	reports := make([]*entities.NetworkReloadReport, 0, len(containers))
-	for _, ctr := range containers {
+	reports := make([]*entities.NetworkReloadReport, 0, len(ctrs))
+	for _, ctr := range ctrs {
 		report := new(entities.NetworkReloadReport)
 		report.Id = ctr.ID()
 		report.Err = ctr.ReloadNetwork()
@@ -128,12 +117,12 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 					return reports, fmt.Errorf("%q has associated containers with it. Use -f to forcibly delete containers and pods: %w", name, define.ErrNetworkInUse)
 				}
 				if c.IsInfra() {
-					// if we have an infra container we need to remove the pod
+					// if we have a infra container we need to remove the pod
 					pod, err := ic.Libpod.GetPod(c.PodID())
 					if err != nil {
 						return reports, err
 					}
-					if _, err := ic.Libpod.RemovePod(ctx, pod, true, true, options.Timeout); err != nil {
+					if err := ic.Libpod.RemovePod(ctx, pod, true, true, options.Timeout); err != nil {
 						return reports, err
 					}
 				} else if err := ic.Libpod.RemoveContainer(ctx, c, true, true, options.Timeout); err != nil && !errors.Is(err, define.ErrNoSuchCtr) {
@@ -149,12 +138,11 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 	return reports, nil
 }
 
-func (ic *ContainerEngine) NetworkCreate(ctx context.Context, network types.Network, createOptions *types.NetworkCreateOptions) (*types.Network, error) {
-	// TODO (5.0): Stop accepting "pasta" as value here
-	if util.StringInSlice(network.Name, []string{"none", "host", "bridge", "private", "slirp4netns", "container", "ns", "default"}) {
+func (ic *ContainerEngine) NetworkCreate(ctx context.Context, network types.Network) (*types.Network, error) {
+	if util.StringInSlice(network.Name, []string{"none", "host", "bridge", "private", "slirp4netns", "container", "ns"}) {
 		return nil, fmt.Errorf("cannot create network with name %q because it conflicts with a valid network mode", network.Name)
 	}
-	network, err := ic.Libpod.Network().NetworkCreate(network, createOptions)
+	network, err := ic.Libpod.Network().NetworkCreate(network)
 	if err != nil {
 		return nil, err
 	}

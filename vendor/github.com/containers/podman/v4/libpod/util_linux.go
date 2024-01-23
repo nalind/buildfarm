@@ -1,12 +1,10 @@
-//go:build !remote
-// +build !remote
+//go:build linux
+// +build linux
 
 package libpod
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -19,36 +17,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func cgroupExist(path string) bool {
-	cgroupv2, _ := cgroups.IsCgroup2UnifiedMode()
-	var fullPath string
-	if cgroupv2 {
-		fullPath = filepath.Join("/sys/fs/cgroup", path)
-	} else {
-		fullPath = filepath.Join("/sys/fs/cgroup/memory", path)
-	}
-	_, err := os.Stat(fullPath)
-	return err == nil
-}
-
 // systemdSliceFromPath makes a new systemd slice under the given parent with
 // the given name.
 // The parent must be a slice. The name must NOT include ".slice"
 func systemdSliceFromPath(parent, name string, resources *spec.LinuxResources) (string, error) {
-	cgroupPath, systemdPath, err := assembleSystemdCgroupName(parent, name)
+	cgroupPath, err := assembleSystemdCgroupName(parent, name)
 	if err != nil {
 		return "", err
 	}
 
-	logrus.Debugf("Created cgroup path %s for parent %s and name %s", systemdPath, parent, name)
+	logrus.Debugf("Created cgroup path %s for parent %s and name %s", cgroupPath, parent, name)
 
-	if !cgroupExist(cgroupPath) {
-		if err := makeSystemdCgroup(systemdPath, resources); err != nil {
-			return "", fmt.Errorf("creating cgroup %s: %w", cgroupPath, err)
-		}
+	if err := makeSystemdCgroup(cgroupPath, resources); err != nil {
+		return "", fmt.Errorf("creating cgroup %s: %w", cgroupPath, err)
 	}
 
-	logrus.Debugf("Created cgroup %s", systemdPath)
+	logrus.Debugf("Created cgroup %s", cgroupPath)
 
 	return cgroupPath, nil
 }
@@ -92,7 +76,7 @@ func deleteSystemdCgroup(path string, resources *spec.LinuxResources) error {
 		return err
 	}
 	if rootless.IsRootless() {
-		conn, err := cgroups.UserConnection(rootless.GetRootlessUID())
+		conn, err := cgroups.GetUserConnection(rootless.GetRootlessUID())
 		if err != nil {
 			return err
 		}
@@ -104,27 +88,19 @@ func deleteSystemdCgroup(path string, resources *spec.LinuxResources) error {
 }
 
 // assembleSystemdCgroupName creates a systemd cgroup path given a base and
-// a new component to add.  It also returns the path to the cgroup as it accessible
-// below the cgroup mounts.
+// a new component to add.
 // The base MUST be systemd slice (end in .slice)
-func assembleSystemdCgroupName(baseSlice, newSlice string) (string, string, error) {
+func assembleSystemdCgroupName(baseSlice, newSlice string) (string, error) {
 	const sliceSuffix = ".slice"
 
 	if !strings.HasSuffix(baseSlice, sliceSuffix) {
-		return "", "", fmt.Errorf("cannot assemble cgroup path with base %q - must end in .slice: %w", baseSlice, define.ErrInvalidArg)
+		return "", fmt.Errorf("cannot assemble cgroup path with base %q - must end in .slice: %w", baseSlice, define.ErrInvalidArg)
 	}
 
 	noSlice := strings.TrimSuffix(baseSlice, sliceSuffix)
-	systemdPath := fmt.Sprintf("%s/%s-%s%s", baseSlice, noSlice, newSlice, sliceSuffix)
+	final := fmt.Sprintf("%s/%s-%s%s", baseSlice, noSlice, newSlice, sliceSuffix)
 
-	if rootless.IsRootless() {
-		// When we run as rootless, the cgroup has a path like the following:
-		///sys/fs/cgroup/user.slice/user-@$UID.slice/user@$UID.service/user.slice/user-libpod_pod_$POD_ID.slice
-		uid := rootless.GetRootlessUID()
-		raw := fmt.Sprintf("user.slice/%s-%d.slice/user@%d.service/%s/%s-%s%s", noSlice, uid, uid, baseSlice, noSlice, newSlice, sliceSuffix)
-		return raw, systemdPath, nil
-	}
-	return systemdPath, systemdPath, nil
+	return final, nil
 }
 
 var lvpRelabel = label.Relabel
@@ -133,16 +109,13 @@ var lvpReleaseLabel = label.ReleaseLabel
 
 // LabelVolumePath takes a mount path for a volume and gives it an
 // selinux label of either shared or not
-func LabelVolumePath(path, mountLabel string) error {
-	if mountLabel == "" {
-		var err error
-		_, mountLabel, err = lvpInitLabels([]string{})
-		if err != nil {
-			return fmt.Errorf("getting default mountlabels: %w", err)
-		}
-		if err := lvpReleaseLabel(mountLabel); err != nil {
-			return fmt.Errorf("releasing label %q: %w", mountLabel, err)
-		}
+func LabelVolumePath(path string) error {
+	_, mountLabel, err := lvpInitLabels([]string{})
+	if err != nil {
+		return fmt.Errorf("getting default mountlabels: %w", err)
+	}
+	if err := lvpReleaseLabel(mountLabel); err != nil {
+		return fmt.Errorf("releasing label %q: %w", mountLabel, err)
 	}
 
 	if err := lvpRelabel(path, mountLabel, true); err != nil {

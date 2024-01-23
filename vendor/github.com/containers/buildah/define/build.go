@@ -64,14 +64,9 @@ type CommonBuildOptions struct {
 	LabelOpts []string
 	// MemorySwap limits the amount of memory and swap together.
 	MemorySwap int64
-	// NoHostname tells the builder not to create /etc/hostname content when running
-	// containers.
-	NoHostname bool
 	// NoHosts tells the builder not to create /etc/hosts content when running
 	// containers.
 	NoHosts bool
-	// NoNewPrivileges removes the ability for the container to gain privileges
-	NoNewPrivileges bool
 	// OmitTimestamp forces epoch 0 as created timestamp to allow for
 	// deterministic, content-addressable builds.
 	OmitTimestamp bool
@@ -144,10 +139,10 @@ type BuildOptions struct {
 	TransientMounts []string
 	// CacheFrom specifies any remote repository which can be treated as
 	// potential cache source.
-	CacheFrom []reference.Named
+	CacheFrom reference.Named
 	// CacheTo specifies any remote repository which can be treated as
 	// potential cache destination.
-	CacheTo []reference.Named
+	CacheTo reference.Named
 	// CacheTTL specifies duration, if specified using `--cache-ttl` then
 	// cache intermediate images under this duration will be considered as
 	// valid cache sources and images outside this duration will be ignored.
@@ -166,10 +161,6 @@ type BuildOptions struct {
 	// It allows end user to export recently built rootfs into a directory or tar.
 	// See the documentation of 'buildah build --output' for the details of the format.
 	BuildOutput string
-	// ConfidentialWorkload controls whether or not, and if so, how, we produce an
-	// image that's meant to be run using krun as a VM instead of a conventional
-	// process-type container.
-	ConfidentialWorkload ConfidentialWorkloadOptions
 	// Additional tags to add to the image that we write, if we know of a
 	// way to add them.
 	AdditionalTags []string
@@ -251,8 +242,6 @@ type BuildOptions struct {
 	Squash bool
 	// Labels metadata for an image
 	Labels []string
-	// LayerLabels metadata for an intermediate image
-	LayerLabels []string
 	// Annotation metadata for an image
 	Annotations []string
 	// OnBuild commands to be run by images based on this image
@@ -307,10 +296,6 @@ type BuildOptions struct {
 	// From is the image name to use to replace the value specified in the first
 	// FROM instruction in the Containerfile
 	From string
-	// GroupAdd is a list of groups to add to the primary process within
-	// the container. 'keep-groups' allows container processes to use
-	// supplementary groups.
-	GroupAdd []string
 	// Platforms is the list of parsed OS/Arch/Variant triples that we want
 	// to build the image for.  If this slice has items in it, the OS and
 	// Architecture fields above are ignored.
@@ -321,8 +306,6 @@ type BuildOptions struct {
 	AllPlatforms bool
 	// UnsetEnvs is a list of environments to not add to final image.
 	UnsetEnvs []string
-	// UnsetLabels is a list of labels to not add to final image from base image.
-	UnsetLabels []string
 	// Envs is a list of environment variables to set in the final image.
 	Envs []string
 	// OSFeatures specifies operating system features the image requires.

@@ -1,12 +1,11 @@
-//go:build !remote
-// +build !remote
+//go:build freebsd
+// +build freebsd
 
 package libpod
 
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -37,7 +36,7 @@ func (c *Container) unmountSHM(path string) error {
 func (c *Container) prepare() error {
 	var (
 		wg                              sync.WaitGroup
-		ctrNS                           string
+		ctrNS                           *jailNetNS
 		networkStatus                   map[string]types.StatusBlock
 		createNetNSErr, mountStorageErr error
 		mountPoint                      string
@@ -49,7 +48,7 @@ func (c *Container) prepare() error {
 	go func() {
 		defer wg.Done()
 		// Set up network namespace if not already set up
-		noNetNS := c.state.NetNS == ""
+		noNetNS := c.state.NetNS == nil
 		if c.config.CreateNetNS && noNetNS && !c.config.PostConfigureNetNS {
 			ctrNS, networkStatus, createNetNSErr = c.runtime.createNetNS(c)
 			if createNetNSErr != nil {
@@ -86,9 +85,6 @@ func (c *Container) prepare() error {
 	wg.Wait()
 
 	var createErr error
-	if createNetNSErr != nil {
-		createErr = createNetNSErr
-	}
 	if mountStorageErr != nil {
 		if createErr != nil {
 			logrus.Errorf("Preparing container %s: %v", c.ID(), createErr)
@@ -96,23 +92,7 @@ func (c *Container) prepare() error {
 		createErr = mountStorageErr
 	}
 
-	// Only trigger storage cleanup if mountStorage was successful.
-	// Otherwise, we may mess up mount counters.
 	if createErr != nil {
-		if mountStorageErr == nil {
-			if err := c.cleanupStorage(); err != nil {
-				// createErr is guaranteed non-nil, so print
-				// unconditionally
-				logrus.Errorf("Preparing container %s: %v", c.ID(), createErr)
-				createErr = fmt.Errorf("unmounting storage for container %s after network create failure: %w", c.ID(), err)
-			}
-		}
-		// It's OK to unconditionally trigger network cleanup. If the network
-		// isn't ready it will do nothing.
-		if err := c.cleanupNetwork(); err != nil {
-			logrus.Errorf("Preparing container %s: %v", c.ID(), createErr)
-			createErr = fmt.Errorf("cleaning up container %s network after setup failure: %w", c.ID(), err)
-		}
 		return createErr
 	}
 
@@ -165,13 +145,11 @@ func (c *Container) reloadNetwork() error {
 // Add an existing container's network jail
 func (c *Container) addNetworkContainer(g *generate.Generator, ctr string) error {
 	nsCtr, err := c.runtime.state.Container(ctr)
+	c.runtime.state.UpdateContainer(nsCtr)
 	if err != nil {
 		return fmt.Errorf("retrieving dependency %s of container %s from state: %w", ctr, c.ID(), err)
 	}
-	c.runtime.state.UpdateContainer(nsCtr)
-	if nsCtr.state.NetNS != "" {
-		g.AddAnnotation("org.freebsd.parentJail", nsCtr.state.NetNS)
-	}
+	g.AddAnnotation("org.freebsd.parentJail", nsCtr.state.NetNS.Name)
 	return nil
 }
 
@@ -189,20 +167,12 @@ func (c *Container) getOCICgroupPath() (string, error) {
 
 func openDirectory(path string) (fd int, err error) {
 	const O_PATH = 0x00400000
-	return unix.Open(path, unix.O_RDONLY|O_PATH|unix.O_CLOEXEC, 0)
+	return unix.Open(path, unix.O_RDONLY|O_PATH, 0)
 }
 
 func (c *Container) addNetworkNamespace(g *generate.Generator) error {
 	if c.config.CreateNetNS {
-		if c.state.NetNS == "" {
-			// This should not happen since network setup
-			// errors should be propagated correctly from
-			// (*Runtime).createNetNS. Check for it anyway
-			// since it caused nil pointer dereferences in
-			// the past (see #16333).
-			return fmt.Errorf("Inconsistent state: c.config.CreateNetNS is set but c.state.NetNS is nil")
-		}
-		g.AddAnnotation("org.freebsd.parentJail", c.state.NetNS)
+		g.AddAnnotation("org.freebsd.parentJail", c.state.NetNS.Name)
 	}
 	return nil
 }
@@ -281,13 +251,13 @@ func (c *Container) addSlirp4netnsDNS(nameservers []string) []string {
 	return nameservers
 }
 
-func (c *Container) isSlirp4netnsIPv6() bool {
-	return false
+func (c *Container) isSlirp4netnsIPv6() (bool, error) {
+	return false, nil
 }
 
 // check for net=none
 func (c *Container) hasNetNone() bool {
-	return c.state.NetNS == ""
+	return c.state.NetNS == nil
 }
 
 func setVolumeAtime(mountPoint string, st os.FileInfo) error {
@@ -301,98 +271,4 @@ func setVolumeAtime(mountPoint string, st os.FileInfo) error {
 
 func (c *Container) makePlatformBindMounts() error {
 	return nil
-}
-
-func (c *Container) getConmonPidFd() int {
-	// Note: kqueue(2) could be used here but that would require
-	// factoring out the call to unix.PollFd from WaitForExit so
-	// keeping things simple for now.
-	return -1
-}
-
-func (c *Container) jailName() (string, error) {
-	// If this container is in a pod, get the vnet name from the
-	// corresponding infra container
-	var ic *Container
-	if c.config.Pod != "" && c.config.Pod != c.ID() {
-		// Get the pod from state
-		pod, err := c.runtime.state.Pod(c.config.Pod)
-		if err != nil {
-			return "", fmt.Errorf("cannot find infra container for pod %s: %w", c.config.Pod, err)
-		}
-		ic, err = pod.InfraContainer()
-		if err != nil {
-			return "", fmt.Errorf("getting infra container for pod %s: %w", pod.ID(), err)
-		}
-		if ic.ID() != c.ID() {
-			ic.lock.Lock()
-			defer ic.lock.Unlock()
-			if err := ic.syncContainer(); err != nil {
-				return "", err
-			}
-		}
-	} else {
-		ic = c
-	}
-
-	if ic.state.NetNS != "" {
-		return ic.state.NetNS + "." + c.ID(), nil
-	} else {
-		return c.ID(), nil
-	}
-}
-
-type safeMountInfo struct {
-	// mountPoint is the mount point.
-	mountPoint string
-}
-
-// Close releases the resources allocated with the safe mount info.
-func (s *safeMountInfo) Close() {
-}
-
-// safeMountSubPath securely mounts a subpath inside a volume to a new temporary location.
-// The function checks that the subpath is a valid subpath within the volume and that it
-// does not escape the boundaries of the mount point (volume).
-//
-// The caller is responsible for closing the file descriptor and unmounting the subpath
-// when it's no longer needed.
-func (c *Container) safeMountSubPath(mountPoint, subpath string) (s *safeMountInfo, err error) {
-	return &safeMountInfo{mountPoint: filepath.Join(mountPoint, subpath)}, nil
-}
-
-func (c *Container) makePlatformMtabLink(etcInTheContainerFd, rootUID, rootGID int) error {
-	// /etc/mtab does not exist on FreeBSD
-	return nil
-}
-
-func (c *Container) getPlatformRunPath() (string, error) {
-	// If we have a linux image, use "/run", otherwise use "/var/run" for
-	// consistency with FreeBSD path conventions.
-	runPath := "/var/run"
-	if c.config.RootfsImageID != "" {
-		image, _, err := c.runtime.libimageRuntime.LookupImage(c.config.RootfsImageID, nil)
-		if err != nil {
-			return "", err
-		}
-		inspectData, err := image.Inspect(nil, nil)
-		if err != nil {
-			return "", err
-		}
-		if inspectData.Os == "linux" {
-			runPath = "/run"
-		}
-	}
-	return runPath, nil
-}
-
-func (c *Container) addMaskedPaths(g *generate.Generator) {
-	// There are currently no FreeBSD-specific masked paths
-}
-
-func (c *Container) hasPrivateUTS() bool {
-	// Currently we always use a private UTS namespace on FreeBSD. This
-	// should be optional but needs a FreeBSD section in the OCI runtime
-	// specification.
-	return true
 }

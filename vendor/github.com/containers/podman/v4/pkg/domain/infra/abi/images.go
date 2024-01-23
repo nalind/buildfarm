@@ -15,9 +15,7 @@ import (
 	"strings"
 	"syscall"
 
-	bdefine "github.com/containers/buildah/define"
 	"github.com/containers/common/libimage"
-	"github.com/containers/common/libimage/filter"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/docker"
@@ -34,6 +32,7 @@ import (
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/storage"
+	dockerRef "github.com/docker/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
@@ -57,18 +56,7 @@ func (ir *ImageEngine) Prune(ctx context.Context, opts entities.ImagePruneOption
 	}
 
 	if !opts.All {
-		// Issue #20469: Docker clients handle the --all flag on the
-		// client side by setting the dangling filter directly.
-		alreadySet := false
-		for _, filter := range pruneOptions.Filters {
-			if strings.HasPrefix(filter, "dangling=") {
-				alreadySet = true
-				break
-			}
-		}
-		if !alreadySet {
-			pruneOptions.Filters = append(pruneOptions.Filters, "dangling=true")
-		}
+		pruneOptions.Filters = append(pruneOptions.Filters, "dangling=true")
 	}
 	if opts.External {
 		pruneOptions.Filters = append(pruneOptions.Filters, "containers=external")
@@ -105,16 +93,15 @@ func (ir *ImageEngine) Prune(ctx context.Context, opts entities.ImagePruneOption
 }
 
 func toDomainHistoryLayer(layer *libimage.ImageHistory) entities.ImageHistoryLayer {
-	l := entities.ImageHistoryLayer{
-		Comment:   layer.Comment,
-		CreatedBy: layer.CreatedBy,
-		ID:        layer.ID,
-		Size:      layer.Size,
-		Tags:      layer.Tags,
-	}
+	l := entities.ImageHistoryLayer{}
+	l.ID = layer.ID
 	if layer.Created != nil {
 		l.Created = *layer.Created
 	}
+	l.CreatedBy = layer.CreatedBy
+	copy(l.Tags, layer.Tags)
+	l.Size = layer.Size
+	l.Comment = layer.Comment
 	return l
 }
 
@@ -250,7 +237,6 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, options entiti
 	pullOptions.SignaturePolicyPath = options.SignaturePolicy
 	pullOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
 	pullOptions.Writer = options.Writer
-	pullOptions.OciDecryptConfig = options.OciDecryptConfig
 
 	if !options.Quiet && pullOptions.Writer == nil {
 		pullOptions.Writer = os.Stderr
@@ -295,7 +281,7 @@ func (ir *ImageEngine) Inspect(ctx context.Context, namesOrIDs []string, opts en
 	return reports, errs, nil
 }
 
-func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, options entities.ImagePushOptions) (*entities.ImagePushReport, error) {
+func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, options entities.ImagePushOptions) error {
 	var manifestType string
 	switch options.Format {
 	case "":
@@ -307,7 +293,7 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 	case "v2s2", "docker":
 		manifestType = manifest.DockerV2Schema2MediaType
 	default:
-		return nil, fmt.Errorf("unknown format %q. Choose on of the supported formats: 'oci', 'v2s1', or 'v2s2'", options.Format)
+		return fmt.Errorf("unknown format %q. Choose on of the supported formats: 'oci', 'v2s1', or 'v2s2'", options.Format)
 	}
 
 	pushOptions := &libimage.PushOptions{}
@@ -318,42 +304,27 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 	pushOptions.Password = options.Password
 	pushOptions.ManifestMIMEType = manifestType
 	pushOptions.RemoveSignatures = options.RemoveSignatures
-	pushOptions.PolicyAllowStorage = true
-	pushOptions.SignaturePolicyPath = options.SignaturePolicy
-	pushOptions.Signers = options.Signers
 	pushOptions.SignBy = options.SignBy
 	pushOptions.SignPassphrase = options.SignPassphrase
 	pushOptions.SignBySigstorePrivateKeyFile = options.SignBySigstorePrivateKeyFile
 	pushOptions.SignSigstorePrivateKeyPassphrase = options.SignSigstorePrivateKeyPassphrase
 	pushOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
 	pushOptions.Writer = options.Writer
-	pushOptions.OciEncryptConfig = options.OciEncryptConfig
-	pushOptions.OciEncryptLayers = options.OciEncryptLayers
-	pushOptions.CompressionLevel = options.CompressionLevel
-	pushOptions.ForceCompressionFormat = options.ForceCompressionFormat
 
 	compressionFormat := options.CompressionFormat
 	if compressionFormat == "" {
 		config, err := ir.Libpod.GetConfigNoCopy()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		compressionFormat = config.Engine.CompressionFormat
 	}
 	if compressionFormat != "" {
 		algo, err := compression.AlgorithmByName(compressionFormat)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		pushOptions.CompressionFormat = &algo
-	}
-
-	if pushOptions.CompressionLevel == nil {
-		config, err := ir.Libpod.GetConfigNoCopy()
-		if err != nil {
-			return nil, err
-		}
-		pushOptions.CompressionLevel = config.Engine.CompressionLevel
 	}
 
 	if !options.Quiet && pushOptions.Writer == nil {
@@ -362,26 +333,28 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 
 	pushedManifestBytes, pushError := ir.Libpod.LibimageRuntime().Push(ctx, source, destination, pushOptions)
 	if pushError == nil {
-		manifestDigest, err := manifest.Digest(pushedManifestBytes)
-		if err != nil {
-			return nil, err
+		if options.DigestFile != "" {
+			manifestDigest, err := manifest.Digest(pushedManifestBytes)
+			if err != nil {
+				return err
+			}
+
+			if err := os.WriteFile(options.DigestFile, []byte(manifestDigest.String()), 0644); err != nil {
+				return err
+			}
 		}
-		return &entities.ImagePushReport{ManifestDigest: manifestDigest.String()}, nil
+		return nil
 	}
 	// If the image could not be found, we may be referring to a manifest
 	// list but could not find a matching image instance in the local
 	// containers storage. In that case, fall back and attempt to push the
 	// (entire) manifest.
 	if _, err := ir.Libpod.LibimageRuntime().LookupManifestList(source); err == nil {
-		pushedManifestString, err := ir.ManifestPush(ctx, source, destination, options)
-		if err != nil {
-			return nil, err
-		}
-		return &entities.ImagePushReport{ManifestDigest: pushedManifestString}, nil
+		_, err := ir.ManifestPush(ctx, source, destination, options)
+		return err
 	}
-	return nil, pushError
+	return pushError
 }
-
 func (ir *ImageEngine) Tag(ctx context.Context, nameOrID string, tags []string, options entities.ImageTagOptions) error {
 	// Allow tagging manifest list instead of resolving instances from manifest
 	lookupOptions := &libimage.LookupImageOptions{ManifestList: true}
@@ -475,17 +448,13 @@ func (ir *ImageEngine) Import(ctx context.Context, options entities.ImageImportO
 
 // Search for images using term and filters
 func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.ImageSearchOptions) ([]entities.ImageSearchReport, error) {
-	filter, err := filter.ParseSearchFilter(opts.Filters)
+	filter, err := libimage.ParseSearchFilter(opts.Filters)
 	if err != nil {
 		return nil, err
 	}
 
 	searchOptions := &libimage.SearchOptions{
 		Authfile:              opts.Authfile,
-		CertDirPath:           opts.CertDir,
-		Username:              opts.Username,
-		Password:              opts.Password,
-		IdentityToken:         opts.IdentityToken,
 		Filter:                *filter,
 		Limit:                 opts.Limit,
 		NoTrunc:               true,
@@ -525,11 +494,7 @@ func (ir *ImageEngine) Build(ctx context.Context, containerFiles []string, opts 
 	if err != nil {
 		return nil, err
 	}
-	saveFormat := define.OCIArchive
-	if opts.OutputFormat == bdefine.Dockerv2ImageManifest {
-		saveFormat = define.V2s2Archive
-	}
-	return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, nil
+	return &entities.BuildReport{ID: id}, nil
 }
 
 func (ir *ImageEngine) Tree(ctx context.Context, nameOrID string, opts entities.ImageTreeOptions) (*entities.ImageTreeReport, error) {
@@ -845,7 +810,7 @@ func transferRootful(source entities.ImageScpOptions, dest entities.ImageScpOpti
 	if err != nil {
 		return err
 	}
-	out, err := execTransferPodman(uLoad, loadCommand, len(dest.Tag) > 0)
+	out, err := execTransferPodman(uLoad, loadCommand, (len(dest.Tag) > 0))
 	if err != nil {
 		return err
 	}
@@ -929,7 +894,7 @@ func localPathFromURI(url *url.URL) (string, error) {
 }
 
 // putSignature creates signature and saves it to the signstore file
-func putSignature(manifestBlob []byte, mech signature.SigningMechanism, sigStoreDir string, instanceDigest digest.Digest, dockerReference reference.Reference, options entities.SignOptions) error {
+func putSignature(manifestBlob []byte, mech signature.SigningMechanism, sigStoreDir string, instanceDigest digest.Digest, dockerReference dockerRef.Reference, options entities.SignOptions) error {
 	newSig, err := signature.SignDockerManifest(manifestBlob, dockerReference.String(), mech, options.SignBy)
 	if err != nil {
 		return err

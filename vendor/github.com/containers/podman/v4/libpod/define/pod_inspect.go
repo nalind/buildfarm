@@ -83,10 +83,6 @@ type InspectPodData struct {
 	BlkioWeight uint64 `json:"blkio_weight,omitempty"`
 	// BlkioWeightDevice contains the blkio weight device limits for the pod
 	BlkioWeightDevice []InspectBlkioWeightDevice `json:"blkio_weight_device,omitempty"`
-	// RestartPolicy of the pod.
-	RestartPolicy string `json:"RestartPolicy,omitempty"`
-	// Number of the pod's Libpod lock.
-	LockNumber uint32
 }
 
 // InspectPodInfraConfig contains the configuration of the pod's infra
@@ -124,7 +120,7 @@ type InspectPodInfraConfig struct {
 	// HostAdd adds a number of hosts to the infra container's resolv.conf
 	// which will be shared with the rest of the pod.
 	HostAdd []string
-	// Networks is a list of networks the pod will join.
+	// Networks is a list of CNI networks the pod will join.
 	Networks []string
 	// NetworkOptions are additional options for each network
 	NetworkOptions map[string][]string

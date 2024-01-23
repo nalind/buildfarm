@@ -1,24 +1,14 @@
 package generate
 
-// KubeOptions are optional options for generating kube YAML files
-//
 //go:generate go run ../generator/generator.go KubeOptions
+// KubeOptions are optional options for generating kube YAML files
 type KubeOptions struct {
-	// PodmanOnly - add podman-only reserved annotations to generated YAML file (Cannot be used by Kubernetes)
-	PodmanOnly *bool
 	// Service - generate YAML for a Kubernetes _service_ object.
 	Service *bool
-	// Type - the k8s kind to be generated i.e Pod or Deployment
-	Type *string
-	// Replicas - the value to set in the replicas field for a Deployment
-	Replicas *int32
-	// NoTrunc - don't truncate annotations to the Kubernetes maximum length of 63 characters
-	NoTrunc *bool
 }
 
-// SystemdOptions are optional options for generating systemd files
-//
 //go:generate go run ../generator/generator.go SystemdOptions
+// SystemdOptions are optional options for generating systemd files
 type SystemdOptions struct {
 	// Name - use container/pod name instead of its ID.
 	UseName *bool

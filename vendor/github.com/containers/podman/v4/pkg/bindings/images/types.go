@@ -6,9 +6,8 @@ import (
 	buildahDefine "github.com/containers/buildah/define"
 )
 
-// RemoveOptions are optional options for image removal
-//
 //go:generate go run ../generator/generator.go RemoveOptions
+// RemoveOptions are optional options for image removal
 type RemoveOptions struct {
 	// All removes all images
 	All *bool
@@ -22,9 +21,8 @@ type RemoveOptions struct {
 	NoPrune *bool
 }
 
-// DiffOptions are optional options image diffs
-//
 //go:generate go run ../generator/generator.go DiffOptions
+// DiffOptions are optional options image diffs
 type DiffOptions struct {
 	// By the default diff will compare against the parent layer. Change the Parent if you want to compare against something else.
 	Parent *string
@@ -32,9 +30,8 @@ type DiffOptions struct {
 	DiffType *string
 }
 
-// ListOptions are optional options for listing images
-//
 //go:generate go run ../generator/generator.go ListOptions
+// ListOptions are optional options for listing images
 type ListOptions struct {
 	// All lists all image in the image store including dangling images
 	All *bool
@@ -42,40 +39,35 @@ type ListOptions struct {
 	Filters map[string][]string
 }
 
-// GetOptions are optional options for inspecting an image
-//
 //go:generate go run ../generator/generator.go GetOptions
+// GetOptions are optional options for inspecting an image
 type GetOptions struct {
 	// Size computes the amount of storage the image consumes
 	Size *bool
 }
 
+//go:generate go run ../generator/generator.go TreeOptions
 // TreeOptions are optional options for a tree-based representation
 // of the image
-//
-//go:generate go run ../generator/generator.go TreeOptions
 type TreeOptions struct {
 	// WhatRequires ...
 	WhatRequires *bool
 }
 
-// HistoryOptions are optional options image history
-//
 //go:generate go run ../generator/generator.go HistoryOptions
+// HistoryOptions are optional options image history
 type HistoryOptions struct {
 }
 
-// LoadOptions are optional options for loading an image
-//
 //go:generate go run ../generator/generator.go LoadOptions
+// LoadOptions are optional options for loading an image
 type LoadOptions struct {
 	// Reference is the name of the loaded image
 	Reference *string
 }
 
-// ExportOptions are optional options for exporting images
-//
 //go:generate go run ../generator/generator.go ExportOptions
+// ExportOptions are optional options for exporting images
 type ExportOptions struct {
 	// Compress the image
 	Compress *bool
@@ -85,9 +77,8 @@ type ExportOptions struct {
 	OciAcceptUncompressedLayers *bool
 }
 
-// PruneOptions are optional options for pruning images
-//
 //go:generate go run ../generator/generator.go PruneOptions
+// PruneOptions are optional options for pruning images
 type PruneOptions struct {
 	// Prune all images
 	All *bool
@@ -97,21 +88,18 @@ type PruneOptions struct {
 	Filters map[string][]string
 }
 
-// TagOptions are optional options for tagging images
-//
 //go:generate go run ../generator/generator.go TagOptions
+// TagOptions are optional options for tagging images
 type TagOptions struct {
 }
 
-// UntagOptions are optional options for untagging images
-//
 //go:generate go run ../generator/generator.go UntagOptions
+// UntagOptions are optional options for untagging images
 type UntagOptions struct {
 }
 
-// ImportOptions are optional options for importing images
-//
 //go:generate go run ../generator/generator.go ImportOptions
+// ImportOptions are optional options for importing images
 type ImportOptions struct {
 	// Changes to be applied to the image
 	Changes *[]string
@@ -129,9 +117,8 @@ type ImportOptions struct {
 	Variant *string
 }
 
-// PushOptions are optional options for importing images
-//
 //go:generate go run ../generator/generator.go PushOptions
+// PushOptions are optional options for importing images
 type PushOptions struct {
 	// All indicates whether to push all images related to the image list
 	All *bool
@@ -142,18 +129,10 @@ type PushOptions struct {
 	Compress *bool
 	// CompressionFormat is the format to use for the compression of the blobs
 	CompressionFormat *string
-	// CompressionLevel is the level to use for the compression of the blobs
-	CompressionLevel *int
-	// ForceCompressionFormat ensures that the compression algorithm set in
-	// CompressionFormat is used exclusively, and blobs of other compression
-	// algorithms are not reused.
-	ForceCompressionFormat *bool
-	// Add existing instances with requested compression algorithms to manifest list
-	AddCompression []string
 	// Manifest type of the pushed image
 	Format *string
 	// Password for authenticating against the registry.
-	Password *string `schema:"-"`
+	Password *string
 	// ProgressWriter is a writer where push progress are sent.
 	// Since API handler for image push is quiet by default, WithQuiet(false) is necessary for
 	// the writer to receive progress messages.
@@ -163,17 +142,13 @@ type PushOptions struct {
 	// RemoveSignatures Discard any pre-existing signatures in the image.
 	RemoveSignatures *bool
 	// Username for authenticating against the registry.
-	Username *string `schema:"-"`
+	Username *string
 	// Quiet can be specified to suppress progress when pushing.
 	Quiet *bool
-
-	// Manifest of the pushed image.  Set by images.Push.
-	ManifestDigest *string
 }
 
-// SearchOptions are optional options for searching images on registries
-//
 //go:generate go run ../generator/generator.go SearchOptions
+// SearchOptions are optional options for searching images on registries
 type SearchOptions struct {
 	// Authfile is the path to the authentication file. Ignored for remote
 	// calls.
@@ -186,15 +161,10 @@ type SearchOptions struct {
 	SkipTLSVerify *bool `schema:"-"`
 	// ListTags search the available tags of the repository
 	ListTags *bool
-	// Username for authenticating against the registry.
-	Username *string `schema:"-"`
-	// Password for authenticating against the registry.
-	Password *string `schema:"-"`
 }
 
-// PullOptions are optional options for pulling images
-//
 //go:generate go run ../generator/generator.go PullOptions
+// PullOptions are optional options for pulling images
 type PullOptions struct {
 	// AllTags can be specified to pull all tags of an image. Note
 	// that this only works if the image does not include a tag.
@@ -211,7 +181,7 @@ type PullOptions struct {
 	// "newer", "always". An empty string defaults to "always".
 	Policy *string
 	// Password for authenticating against the registry.
-	Password *string `schema:"-"`
+	Password *string
 	// ProgressWriter is a writer where pull progress are sent.
 	ProgressWriter *io.Writer `schema:"-"`
 	// Quiet can be specified to suppress pull progress when pulling.  Ignored
@@ -220,7 +190,7 @@ type PullOptions struct {
 	// SkipTLSVerify to skip HTTPS and certificate verification.
 	SkipTLSVerify *bool `schema:"-"`
 	// Username for authenticating against the registry.
-	Username *string `schema:"-"`
+	Username *string
 	// Variant will overwrite the local variant for image pulls.
 	Variant *string
 }
@@ -230,9 +200,8 @@ type BuildOptions struct {
 	buildahDefine.BuildOptions
 }
 
-// ExistsOptions are optional options for checking if an image exists
-//
 //go:generate go run ../generator/generator.go ExistsOptions
+// ExistsOptions are optional options for checking if an image exists
 type ExistsOptions struct {
 }
 

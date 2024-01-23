@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package checkpoint
 
 import (
@@ -84,6 +81,18 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 		}
 	}
 
+	if restoreOptions.IgnoreStaticIP || restoreOptions.IgnoreStaticMAC {
+		for net, opts := range ctrConfig.Networks {
+			if restoreOptions.IgnoreStaticIP {
+				opts.StaticIPs = nil
+			}
+			if restoreOptions.IgnoreStaticMAC {
+				opts.StaticMAC = nil
+			}
+			ctrConfig.Networks[net] = opts
+		}
+	}
+
 	ctrID := ctrConfig.ID
 	newName := false
 
@@ -96,8 +105,8 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 
 	if restoreOptions.Pod != "" {
 		// Restoring into a Pod requires much newer versions of CRIU
-		if err := criu.CheckForCriu(criu.PodCriuVersion); err != nil {
-			return nil, fmt.Errorf("restoring containers into pod: %w", err)
+		if !criu.CheckForCriu(criu.PodCriuVersion) {
+			return nil, fmt.Errorf("restoring containers into pods requires at least CRIU %d", criu.PodCriuVersion)
 		}
 		// The runtime also has to support it
 		if !crutils.CRRuntimeSupportsPodCheckpointRestore(runtime.GetOCIRuntimePath()) {
@@ -108,7 +117,7 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 
 		// According to podman pod create a pod can share the following namespaces:
 		// cgroup, ipc, net, pid, uts
-		// Let's make sure we are restoring into a pod with the same shared namespaces.
+		// Let's make sure we a restoring into a pod with the same shared namespaces.
 		pod, err := runtime.LookupPod(ctrConfig.Pod)
 		if err != nil {
 			return nil, fmt.Errorf("pod %q cannot be retrieved: %w", ctrConfig.Pod, err)
@@ -119,7 +128,7 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 			return nil, fmt.Errorf("cannot retrieve infra container from pod %q: %w", ctrConfig.Pod, err)
 		}
 
-		// If a namespace was shared (!= "") it needs to be set to the new infrastructure container.
+		// If a namespaces was shared (!= "") it needs to be set to the new infrastructure container
 		// If the infrastructure container does not share the same namespaces as the to be restored
 		// container we abort.
 		if ctrConfig.IPCNsCtr != "" {

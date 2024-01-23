@@ -18,7 +18,6 @@ import (
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage"
-	"github.com/containers/storage/pkg/directory"
 	"github.com/containers/storage/pkg/unshare"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -35,7 +34,7 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	// we are reporting the default systemd activation socket path as we cannot know if a future
 	// service may be run with another URI.
 	if ic.Libpod.RemoteURI() == "" {
-		xdg := defaultRunPath
+		xdg := "/run"
 		if path, err := util.GetRuntimeDir(); err != nil {
 			// Info is as good as we can guess...
 			return info, err
@@ -108,7 +107,11 @@ func (ic *ContainerEngine) SetupRootless(_ context.Context, noMoveProcess bool) 
 		return nil
 	}
 
-	pausePidPath, err := util.GetRootlessPauseProcessPidPath()
+	tmpDir, err := ic.Libpod.TmpDir()
+	if err != nil {
+		return err
+	}
+	pausePidPath, err := util.GetRootlessPauseProcessPidPathGivenDir(tmpDir)
 	if err != nil {
 		return fmt.Errorf("could not get pause process pid file path: %w", err)
 	}
@@ -133,7 +136,7 @@ func (ic *ContainerEngine) SetupRootless(_ context.Context, noMoveProcess bool) 
 
 	paths := []string{}
 	for _, ctr := range ctrs {
-		paths = append(paths, ctr.ConfigNoCopy().ConmonPidFile)
+		paths = append(paths, ctr.Config().ConmonPidFile)
 	}
 
 	if len(paths) > 0 {
@@ -157,18 +160,6 @@ func (ic *ContainerEngine) SetupRootless(_ context.Context, noMoveProcess bool) 
 // SystemPrune removes unused data from the system. Pruning pods, containers, networks, volumes and images.
 func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.SystemPruneOptions) (*entities.SystemPruneReport, error) {
 	var systemPruneReport = new(entities.SystemPruneReport)
-
-	if options.External {
-		if options.All || options.Volume || len(options.Filters) > 0 {
-			return nil, fmt.Errorf("system prune --external cannot be combined with other options")
-		}
-		err := ic.Libpod.GarbageCollect()
-		if err != nil {
-			return nil, err
-		}
-		return systemPruneReport, nil
-	}
-
 	filters := []string{}
 	for k, v := range options.Filters {
 		filters = append(filters, fmt.Sprintf("%s=%s", k, v[0]))
@@ -262,7 +253,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		dfImages = []*entities.SystemDfImageReport{}
 	)
 
-	imageStats, totalImageSize, err := ic.Libpod.LibimageRuntime().DiskUsage(ctx)
+	imageStats, err := ic.Libpod.LibimageRuntime().DiskUsage(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +272,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		dfImages = append(dfImages, &report)
 	}
 
-	// Get containers and iterate over them
+	// Get Containers and iterate them
 	cons, err := ic.Libpod.GetAllContainers()
 	if err != nil {
 		return nil, err
@@ -323,7 +314,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		dfContainers = append(dfContainers, &report)
 	}
 
-	// Get volumes and iterate over them
+	//	Get volumes and iterate them
 	vols, err := ic.Libpod.GetAllVolumes()
 	if err != nil {
 		return nil, err
@@ -331,7 +322,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 
 	dfVolumes := make([]*entities.SystemDfVolumeReport, 0, len(vols))
 	for _, v := range vols {
-		var reclaimableSize int64
+		var reclaimableSize uint64
 		mountPoint, err := v.MountPoint()
 		if err != nil {
 			return nil, err
@@ -342,7 +333,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 			// TODO: fix this.
 			continue
 		}
-		volSize, err := directory.Size(mountPoint)
+		volSize, err := util.SizeOfPath(mountPoint)
 		if err != nil {
 			return nil, err
 		}
@@ -356,14 +347,12 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		report := entities.SystemDfVolumeReport{
 			VolumeName:      v.Name(),
 			Links:           len(inUse),
-			Size:            volSize,
-			ReclaimableSize: reclaimableSize,
+			Size:            int64(volSize),
+			ReclaimableSize: int64(reclaimableSize),
 		}
 		dfVolumes = append(dfVolumes, &report)
 	}
-
 	return &entities.SystemDfReport{
-		ImagesSize: totalImageSize,
 		Images:     dfImages,
 		Containers: dfContainers,
 		Volumes:    dfVolumes,
@@ -428,15 +417,4 @@ func (ic ContainerEngine) Version(ctx context.Context) (*entities.SystemVersionR
 	}
 	report.Client = &v
 	return &report, err
-}
-
-func (ic ContainerEngine) Locks(ctx context.Context) (*entities.LocksReport, error) {
-	var report entities.LocksReport
-	conflicts, held, err := ic.Libpod.LockConflicts()
-	if err != nil {
-		return nil, err
-	}
-	report.LockConflicts = conflicts
-	report.LocksHeld = held
-	return &report, nil
 }

@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package ps
 
 import (
@@ -14,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	libnetworkTypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/podman/v4/libpod"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -54,14 +50,7 @@ func GetContainerLists(runtime *libpod.Runtime, options entities.ContainerListOp
 		filterFuncs = append(filterFuncs, runningOnly)
 	}
 
-	// Load the containers with their states populated.  This speeds things
-	// up considerably as we use a signel DB connection to load the
-	// containers' states instead of one per container.
-	//
-	// This may return slightly outdated states but that's acceptable for
-	// listing containers; any state is outdated the point a container lock
-	// gets released.
-	cons, err := runtime.GetContainers(true, filterFuncs...)
+	cons, err := runtime.GetContainers(filterFuncs...)
 	if err != nil {
 		return nil, err
 	}
@@ -145,10 +134,6 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		startedTime                             time.Time
 		exitedTime                              time.Time
 		cgroup, ipc, mnt, net, pidns, user, uts string
-		portMappings                            []libnetworkTypes.PortMapping
-		networks                                []string
-		healthStatus                            string
-		restartCount                            uint
 	)
 
 	batchErr := ctr.Batch(func(c *libpod.Container) error {
@@ -158,7 +143,7 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 			}
 		}
 
-		conConfig = c.ConfigNoCopy()
+		conConfig = c.Config()
 		conState, err = c.State()
 		if err != nil {
 			return fmt.Errorf("unable to obtain container state: %w", err)
@@ -180,26 +165,6 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		pid, err = c.PID()
 		if err != nil {
 			return fmt.Errorf("unable to obtain container pid: %w", err)
-		}
-
-		portMappings, err = c.PortMappings()
-		if err != nil {
-			return err
-		}
-
-		networks, err = c.Networks()
-		if err != nil {
-			return err
-		}
-
-		healthStatus, err = c.HealthCheckStatus()
-		if err != nil {
-			return err
-		}
-
-		restartCount, err = c.RestartCount()
-		if err != nil {
-			return err
 		}
 
 		if !opts.Size && !opts.Namespace {
@@ -238,13 +203,22 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		return entities.ListContainer{}, batchErr
 	}
 
+	portMappings, err := ctr.PortMappings()
+	if err != nil {
+		return entities.ListContainer{}, err
+	}
+
+	networks, err := ctr.Networks()
+	if err != nil {
+		return entities.ListContainer{}, err
+	}
+
 	ps := entities.ListContainer{
 		AutoRemove: ctr.AutoRemove(),
-		CIDFile:    conConfig.Spec.Annotations[define.InspectAnnotationCIDFile],
 		Command:    conConfig.Command,
 		Created:    conConfig.CreatedTime,
-		ExitCode:   exitCode,
 		Exited:     exited,
+		ExitCode:   exitCode,
 		ExitedAt:   exitedTime.Unix(),
 		ID:         conConfig.ID,
 		Image:      conConfig.RootfsImageName,
@@ -257,14 +231,12 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		Pid:        pid,
 		Pod:        conConfig.Pod,
 		Ports:      portMappings,
-		Restarts:   restartCount,
 		Size:       size,
 		StartedAt:  startedTime.Unix(),
 		State:      conState.String(),
-		Status:     healthStatus,
 	}
 	if opts.Pod && len(conConfig.Pod) > 0 {
-		podName, err := rt.GetPodName(conConfig.Pod)
+		podName, err := rt.GetName(conConfig.Pod)
 		if err != nil {
 			if errors.Is(err, define.ErrNoSuchCtr) {
 				return entities.ListContainer{}, fmt.Errorf("could not find container %s pod (id %s) in state: %w", conConfig.ID, conConfig.Pod, define.ErrNoSuchPod)
@@ -284,6 +256,12 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 			User:   user,
 			UTS:    uts,
 		}
+	}
+
+	if hc, err := ctr.HealthCheckStatus(); err == nil {
+		ps.Status = hc
+	} else {
+		logrus.Debug(err)
 	}
 
 	return ps, nil

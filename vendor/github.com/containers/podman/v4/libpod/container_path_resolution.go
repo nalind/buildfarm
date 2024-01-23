@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -8,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/podman/v4/libpod/define"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -159,7 +155,7 @@ func isPathOnVolume(c *Container, containerPath string) bool {
 func findBindMount(c *Container, containerPath string) *specs.Mount {
 	cleanedPath := filepath.Clean(containerPath)
 	for _, m := range c.config.Spec.Mounts {
-		if m.Type != define.TypeBind {
+		if m.Type != "bind" {
 			continue
 		}
 		if cleanedPath == filepath.Clean(m.Destination) {
@@ -170,7 +166,7 @@ func findBindMount(c *Container, containerPath string) *specs.Mount {
 	return nil
 }
 
-// / isPathOnMount returns true if the specified containerPath is a subdir of any
+/// isPathOnMount returns true if the specified containerPath is a subdir of any
 // Mount's destination.
 func isPathOnMount(c *Container, containerPath string) bool {
 	cleanedContainerPath := filepath.Clean(containerPath)

@@ -45,23 +45,6 @@ const (
 	numSig = 65 // max number of signals
 )
 
-func init() {
-	rootlessUIDInit := int(C.rootless_uid())
-	rootlessGIDInit := int(C.rootless_gid())
-	if rootlessUIDInit != 0 {
-		// we need this if we joined the user+mount namespace from the C code.
-		if err := os.Setenv("_CONTAINERS_USERNS_CONFIGURED", "done"); err != nil {
-			logrus.Errorf("Failed to set environment variable %s as %s", "_CONTAINERS_USERNS_CONFIGURED", "done")
-		}
-		if err := os.Setenv("_CONTAINERS_ROOTLESS_UID", strconv.Itoa(rootlessUIDInit)); err != nil {
-			logrus.Errorf("Failed to set environment variable %s as %d", "_CONTAINERS_ROOTLESS_UID", rootlessUIDInit)
-		}
-		if err := os.Setenv("_CONTAINERS_ROOTLESS_GID", strconv.Itoa(rootlessGIDInit)); err != nil {
-			logrus.Errorf("Failed to set environment variable %s as %d", "_CONTAINERS_ROOTLESS_GID", rootlessGIDInit)
-		}
-	}
-}
-
 func runInUser() error {
 	return os.Setenv("_CONTAINERS_USERNS_CONFIGURED", "done")
 }
@@ -73,21 +56,60 @@ var (
 
 // IsRootless tells us if we are running in rootless mode
 func IsRootless() bool {
-	// unshare.IsRootless() is used to check if a user namespace is required.
-	// Here we need to make sure that nested podman instances act
-	// as if they have root privileges and pick paths on the host
-	// that would normally be used for root.
-	return unshare.IsRootless() && unshare.GetRootlessUID() > 0
+	isRootlessOnce.Do(func() {
+		rootlessUIDInit := int(C.rootless_uid())
+		rootlessGIDInit := int(C.rootless_gid())
+		if rootlessUIDInit != 0 {
+			// This happens if we joined the user+mount namespace as part of
+			if err := os.Setenv("_CONTAINERS_USERNS_CONFIGURED", "done"); err != nil {
+				logrus.Errorf("Failed to set environment variable %s as %s", "_CONTAINERS_USERNS_CONFIGURED", "done")
+			}
+			if err := os.Setenv("_CONTAINERS_ROOTLESS_UID", fmt.Sprintf("%d", rootlessUIDInit)); err != nil {
+				logrus.Errorf("Failed to set environment variable %s as %d", "_CONTAINERS_ROOTLESS_UID", rootlessUIDInit)
+			}
+			if err := os.Setenv("_CONTAINERS_ROOTLESS_GID", fmt.Sprintf("%d", rootlessGIDInit)); err != nil {
+				logrus.Errorf("Failed to set environment variable %s as %d", "_CONTAINERS_ROOTLESS_GID", rootlessGIDInit)
+			}
+		}
+		isRootless = os.Geteuid() != 0 || os.Getenv("_CONTAINERS_USERNS_CONFIGURED") != ""
+		if !isRootless {
+			hasCapSysAdmin, err := unshare.HasCapSysAdmin()
+			if err != nil {
+				logrus.Warnf("Failed to read CAP_SYS_ADMIN presence for the current process")
+			}
+			if err == nil && !hasCapSysAdmin {
+				isRootless = true
+			}
+		}
+	})
+	return isRootless
 }
 
 // GetRootlessUID returns the UID of the user in the parent userNS
 func GetRootlessUID() int {
-	return unshare.GetRootlessUID()
+	uidEnv := os.Getenv("_CONTAINERS_ROOTLESS_UID")
+	if uidEnv != "" {
+		u, _ := strconv.Atoi(uidEnv)
+		return u
+	}
+	return os.Geteuid()
 }
 
 // GetRootlessGID returns the GID of the user in the parent userNS
 func GetRootlessGID() int {
-	return unshare.GetRootlessGID()
+	gidEnv := os.Getenv("_CONTAINERS_ROOTLESS_GID")
+	if gidEnv != "" {
+		u, _ := strconv.Atoi(gidEnv)
+		return u
+	}
+
+	/* If the _CONTAINERS_ROOTLESS_UID is set, assume the gid==uid.  */
+	uidEnv := os.Getenv("_CONTAINERS_ROOTLESS_UID")
+	if uidEnv != "" {
+		u, _ := strconv.Atoi(uidEnv)
+		return u
+	}
+	return os.Getegid()
 }
 
 func tryMappingTool(uid bool, pid int, hostID int, mappings []idtools.IDMap) error {
@@ -110,7 +132,7 @@ func tryMappingTool(uid bool, pid int, hostID int, mappings []idtools.IDMap) err
 		return append(l, strconv.Itoa(a), strconv.Itoa(b), strconv.Itoa(c))
 	}
 
-	args := []string{path, strconv.Itoa(pid)}
+	args := []string{path, fmt.Sprintf("%d", pid)}
 	args = appendTriplet(args, 0, hostID, 1)
 	for _, i := range mappings {
 		if hostID >= i.HostID && hostID < i.HostID+i.Size {
@@ -150,7 +172,7 @@ func joinUserAndMountNS(pid uint, pausePid string) (bool, int, error) {
 	if err != nil {
 		return false, 0, err
 	}
-	if (os.Geteuid() == 0 && hasCapSysAdmin) || os.Getenv("_CONTAINERS_USERNS_CONFIGURED") != "" {
+	if hasCapSysAdmin || os.Getenv("_CONTAINERS_USERNS_CONFIGURED") != "" {
 		return false, 0, nil
 	}
 
@@ -162,11 +184,16 @@ func joinUserAndMountNS(pid uint, pausePid string) (bool, int, error) {
 		return false, -1, fmt.Errorf("cannot re-exec process to join the existing user namespace")
 	}
 
-	return waitAndProxySignalsToChild(pidC)
+	ret := C.reexec_in_user_namespace_wait(pidC, 0)
+	if ret < 0 {
+		return false, -1, errors.New("waiting for the re-exec process")
+	}
+
+	return true, int(ret), nil
 }
 
 // GetConfiguredMappings returns the additional IDs configured for the current user.
-func GetConfiguredMappings(quiet bool) ([]idtools.IDMap, []idtools.IDMap, error) {
+func GetConfiguredMappings() ([]idtools.IDMap, []idtools.IDMap, error) {
 	var uids, gids []idtools.IDMap
 	username := os.Getenv("USER")
 	if username == "" {
@@ -184,7 +211,7 @@ func GetConfiguredMappings(quiet bool) ([]idtools.IDMap, []idtools.IDMap, error)
 	mappings, err := idtools.NewIDMappings(username, username)
 	if err != nil {
 		logLevel := logrus.ErrorLevel
-		if quiet || (os.Geteuid() == 0 && GetRootlessUID() == 0) {
+		if os.Geteuid() == 0 && GetRootlessUID() == 0 {
 			logLevel = logrus.DebugLevel
 		}
 		logrus.StandardLogger().Logf(logLevel, "cannot find UID/GID for user %s: %v - check rootless mode in man pages.", username, err)
@@ -196,11 +223,6 @@ func GetConfiguredMappings(quiet bool) ([]idtools.IDMap, []idtools.IDMap, error)
 }
 
 func copyMappings(from, to string) error {
-	// when running as non-root always go through the newuidmap/newgidmap
-	// configuration since this is the expectation when running on Kubernetes
-	if os.Geteuid() != 0 {
-		return errors.New("copying mappings is allowed only for root")
-	}
 	content, err := os.ReadFile(from)
 	if err != nil {
 		return err
@@ -221,7 +243,7 @@ func becomeRootInUserNS(pausePid, fileToRead string, fileOutput *os.File) (_ boo
 		return false, 0, err
 	}
 
-	if (os.Geteuid() == 0 && hasCapSysAdmin) || os.Getenv("_CONTAINERS_USERNS_CONFIGURED") != "" {
+	if hasCapSysAdmin || os.Getenv("_CONTAINERS_USERNS_CONFIGURED") != "" {
 		if os.Getenv("_CONTAINERS_USERNS_CONFIGURED") == "init" {
 			return false, 0, runInUser()
 		}
@@ -295,7 +317,7 @@ func becomeRootInUserNS(pausePid, fileToRead string, fileOutput *os.File) (_ boo
 		return false, -1, fmt.Errorf("cannot re-exec process")
 	}
 
-	uids, gids, err := GetConfiguredMappings(false)
+	uids, gids, err := GetConfiguredMappings()
 	if err != nil {
 		return false, -1, err
 	}
@@ -352,7 +374,7 @@ func becomeRootInUserNS(pausePid, fileToRead string, fileOutput *os.File) (_ boo
 		}
 	}
 
-	_, err = w.WriteString("0")
+	_, err = w.Write([]byte("0"))
 	if err != nil {
 		return false, -1, fmt.Errorf("write to sync pipe: %w", err)
 	}
@@ -368,6 +390,7 @@ func becomeRootInUserNS(pausePid, fileToRead string, fileOutput *os.File) (_ boo
 		if ret < 0 {
 			return false, -1, errors.New("waiting for the re-exec process")
 		}
+
 		return true, 0, nil
 	}
 
@@ -390,10 +413,6 @@ func becomeRootInUserNS(pausePid, fileToRead string, fileOutput *os.File) (_ boo
 		return false, -1, errors.New("setting up the process")
 	}
 
-	return waitAndProxySignalsToChild(pidC)
-}
-
-func waitAndProxySignalsToChild(pid C.int) (bool, int, error) {
 	signals := []os.Signal{}
 	for sig := 0; sig < numSig; sig++ {
 		if sig == int(unix.SIGTSTP) {
@@ -402,28 +421,24 @@ func waitAndProxySignalsToChild(pid C.int) (bool, int, error) {
 		signals = append(signals, unix.Signal(sig))
 	}
 
-	// Disable all existing signal handlers, from now forward everything to the child and let
-	// it deal with it. All we do is to wait and propagate the exit code from the child to our parent.
-	gosignal.Reset()
 	c := make(chan os.Signal, len(signals))
 	gosignal.Notify(c, signals...)
+	defer gosignal.Reset()
 	go func() {
 		for s := range c {
 			if s == unix.SIGCHLD || s == unix.SIGPIPE {
 				continue
 			}
 
-			if err := unix.Kill(int(pid), s.(unix.Signal)); err != nil {
+			if err := unix.Kill(int(pidC), s.(unix.Signal)); err != nil {
 				if err != unix.ESRCH {
-					logrus.Errorf("Failed to propagate signal to child process %d: %v", int(pid), err)
+					logrus.Errorf("Failed to propagate signal to child process %d: %v", int(pidC), err)
 				}
 			}
 		}
 	}()
 
-	ret := C.reexec_in_user_namespace_wait(pid, 0)
-	// child exited reset our signal proxy handler
-	gosignal.Reset()
+	ret := C.reexec_in_user_namespace_wait(pidC, 0)
 	if ret < 0 {
 		return false, -1, errors.New("waiting for the re-exec process")
 	}
@@ -577,7 +592,7 @@ func ConfigurationMatches() (bool, error) {
 		return true, nil
 	}
 
-	uids, gids, err := GetConfiguredMappings(false)
+	uids, gids, err := GetConfiguredMappings()
 	if err != nil {
 		return false, err
 	}

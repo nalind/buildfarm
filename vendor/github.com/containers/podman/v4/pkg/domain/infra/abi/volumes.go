@@ -33,11 +33,6 @@ func (ic *ContainerEngine) VolumeCreate(ctx context.Context, opts entities.Volum
 		}
 		volumeOptions = append(volumeOptions, parsedOptions...)
 	}
-
-	if opts.IgnoreIfExists {
-		volumeOptions = append(volumeOptions, libpod.WithVolumeIgnoreIfExist())
-	}
-
 	vol, err := ic.Libpod.NewVolume(ctx, volumeOptions...)
 	if err != nil {
 		return nil, err
@@ -61,9 +56,6 @@ func (ic *ContainerEngine) VolumeRm(ctx context.Context, namesOrIds []string, op
 		for _, id := range namesOrIds {
 			vol, err := ic.Libpod.LookupVolume(id)
 			if err != nil {
-				if opts.Ignore && errors.Is(err, define.ErrNoSuchVolume) {
-					continue
-				}
 				reports = append(reports, &entities.VolumeRmReport{
 					Err: err,
 					Id:  id,
@@ -125,15 +117,11 @@ func (ic *ContainerEngine) VolumeInspect(ctx context.Context, namesOrIds []strin
 }
 
 func (ic *ContainerEngine) VolumePrune(ctx context.Context, options entities.VolumePruneOptions) ([]*reports.PruneReport, error) {
-	funcs := []libpod.VolumeFilter{}
-	for filter, filterValues := range options.Filters {
-		filterFunc, err := filters.GenerateVolumeFilters(filter, filterValues, ic.Libpod)
-		if err != nil {
-			return nil, err
-		}
-		funcs = append(funcs, filterFunc)
+	filterFuncs, err := filters.GenerateVolumeFilters(options.Filters)
+	if err != nil {
+		return nil, err
 	}
-	return ic.pruneVolumesHelper(ctx, funcs)
+	return ic.pruneVolumesHelper(ctx, filterFuncs)
 }
 
 func (ic *ContainerEngine) pruneVolumesHelper(ctx context.Context, filterFuncs []libpod.VolumeFilter) ([]*reports.PruneReport, error) {
@@ -145,15 +133,10 @@ func (ic *ContainerEngine) pruneVolumesHelper(ctx context.Context, filterFuncs [
 }
 
 func (ic *ContainerEngine) VolumeList(ctx context.Context, opts entities.VolumeListOptions) ([]*entities.VolumeListReport, error) {
-	volumeFilters := []libpod.VolumeFilter{}
-	for filter, value := range opts.Filter {
-		filterFunc, err := filters.GenerateVolumeFilters(filter, value, ic.Libpod)
-		if err != nil {
-			return nil, err
-		}
-		volumeFilters = append(volumeFilters, filterFunc)
+	volumeFilters, err := filters.GenerateVolumeFilters(opts.Filter)
+	if err != nil {
+		return nil, err
 	}
-
 	vols, err := ic.Libpod.Volumes(volumeFilters...)
 	if err != nil {
 		return nil, err

@@ -19,7 +19,7 @@ package resource
 import (
 	"math/big"
 
-	"gopkg.in/inf.v0"
+	inf "gopkg.in/inf.v0"
 )
 
 const (

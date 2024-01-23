@@ -288,7 +288,7 @@ func Search(ctx context.Context, term string, options *SearchOptions) ([]entitie
 		params.Set("tlsVerify", strconv.FormatBool(!options.GetSkipTLSVerify()))
 	}
 
-	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, options.GetUsername(), options.GetPassword())
+	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, "", "")
 	if err != nil {
 		return nil, err
 	}

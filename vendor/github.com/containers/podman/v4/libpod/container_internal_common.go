@@ -1,5 +1,4 @@
-//go:build !remote && (linux || freebsd)
-// +build !remote
+//go:build linux || freebsd
 // +build linux freebsd
 
 package libpod
@@ -14,14 +13,14 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
-	"github.com/checkpoint-restore/go-criu/v7/stats"
+	"github.com/checkpoint-restore/go-criu/v5/stats"
+	cdi "github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
 	"github.com/containers/buildah"
 	"github.com/containers/buildah/pkg/chrootuser"
 	"github.com/containers/buildah/pkg/overlay"
@@ -48,7 +47,6 @@ import (
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/lockfile"
-	stypes "github.com/containers/storage/types"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	runcuser "github.com/opencontainers/runc/libcontainer/user"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -56,93 +54,7 @@ import (
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
-	cdi "tags.cncf.io/container-device-interface/pkg/cdi"
 )
-
-func parseOptionIDs(ctrMappings []idtools.IDMap, option string) ([]idtools.IDMap, error) {
-	ranges := strings.Split(option, "#")
-	ret := make([]idtools.IDMap, len(ranges))
-	for i, m := range ranges {
-		var v idtools.IDMap
-
-		if m == "" {
-			return nil, fmt.Errorf("invalid empty range for %q", option)
-		}
-
-		relative := false
-		if m[0] == '@' {
-			relative = true
-			m = m[1:]
-		}
-		_, err := fmt.Sscanf(m, "%d-%d-%d", &v.ContainerID, &v.HostID, &v.Size)
-		if err != nil {
-			return nil, err
-		}
-		if v.ContainerID < 0 || v.HostID < 0 || v.Size < 1 {
-			return nil, fmt.Errorf("invalid value for %q", option)
-		}
-
-		if relative {
-			found := false
-			for _, m := range ctrMappings {
-				if v.ContainerID >= m.ContainerID && v.ContainerID < m.ContainerID+m.Size {
-					v.HostID += m.HostID - m.ContainerID
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("could not find a user namespace mapping for the relative mapping %q", option)
-			}
-		}
-		ret[i] = v
-	}
-	return ret, nil
-}
-
-func parseIDMapMountOption(idMappings stypes.IDMappingOptions, option string) ([]spec.LinuxIDMapping, []spec.LinuxIDMapping, error) {
-	uidMap := idMappings.UIDMap
-	gidMap := idMappings.GIDMap
-	if strings.HasPrefix(option, "idmap=") {
-		var err error
-		options := strings.Split(strings.SplitN(option, "=", 2)[1], ";")
-		for _, i := range options {
-			switch {
-			case strings.HasPrefix(i, "uids="):
-				uidMap, err = parseOptionIDs(idMappings.UIDMap, strings.Replace(i, "uids=", "", 1))
-				if err != nil {
-					return nil, nil, err
-				}
-			case strings.HasPrefix(i, "gids="):
-				gidMap, err = parseOptionIDs(idMappings.GIDMap, strings.Replace(i, "gids=", "", 1))
-				if err != nil {
-					return nil, nil, err
-				}
-			default:
-				return nil, nil, fmt.Errorf("unknown option %q", i)
-			}
-		}
-	}
-
-	uidMappings := make([]spec.LinuxIDMapping, len(uidMap))
-	gidMappings := make([]spec.LinuxIDMapping, len(gidMap))
-	for i, uidmap := range uidMap {
-		uidMappings[i] = spec.LinuxIDMapping{
-			HostID:      uint32(uidmap.HostID),
-			ContainerID: uint32(uidmap.ContainerID),
-			Size:        uint32(uidmap.Size),
-		}
-	}
-	for i, gidmap := range gidMap {
-		gidMappings[i] = spec.LinuxIDMapping{
-			HostID:      uint32(gidmap.HostID),
-			ContainerID: uint32(gidmap.ContainerID),
-			Size:        uint32(gidmap.Size),
-		}
-	}
-	return uidMappings, gidMappings, nil
-}
 
 // Internal only function which returns upper and work dir from
 // overlay options.
@@ -177,21 +89,7 @@ func getOverlayUpperAndWorkDir(options []string) (string, string, error) {
 
 // Generate spec for a container
 // Accepts a map of the container's dependencies
-func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFuncRet func(), err error) {
-	var safeMounts []*safeMountInfo
-	// lock the thread so that the current thread will be kept alive until the mounts are used
-	runtime.LockOSThread()
-	cleanupFunc := func() {
-		runtime.UnlockOSThread()
-		for _, s := range safeMounts {
-			s.Close()
-		}
-	}
-	defer func() {
-		if err != nil {
-			cleanupFunc()
-		}
-	}()
+func (c *Container) generateSpec(ctx context.Context) (*spec.Spec, error) {
 	overrides := c.getUserOverrides()
 	execUser, err := lookup.GetUserGroupInfo(c.state.Mountpoint, c.config.User, overrides)
 	if err != nil {
@@ -199,12 +97,13 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			execUser, err = lookupHostUser(c.config.User)
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	// NewFromSpec() is deprecated according to its comment
 	// however the recommended replace just causes a nil map panic
+	//nolint:staticcheck
 	g := generate.NewFromSpec(c.config.Spec)
 
 	// If the flag to mount all devices is set for a privileged container, add
@@ -215,57 +114,47 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			systemdMode = *c.config.Systemd
 		}
 		if err := util.AddPrivilegedDevices(&g, systemdMode); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 
 	// If network namespace was requested, add it now
 	if err := c.addNetworkNamespace(&g); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Apply AppArmor checks and load the default profile if needed.
 	if len(c.config.Spec.Process.ApparmorProfile) > 0 {
 		updatedProfile, err := apparmor.CheckProfileAndLoadDefault(c.config.Spec.Process.ApparmorProfile)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		g.SetProcessApparmorProfile(updatedProfile)
 	}
 
 	if err := c.makeBindMounts(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	if err := c.mountNotifySocket(g); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Get host UID and GID based on the container process UID and GID.
 	hostUID, hostGID, err := butil.GetHostIDs(util.IDtoolsToRuntimeSpec(c.config.IDMappings.UIDMap), util.IDtoolsToRuntimeSpec(c.config.IDMappings.GIDMap), uint32(execUser.Uid), uint32(execUser.Gid))
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Add named volumes
 	for _, namedVol := range c.config.NamedVolumes {
 		volume, err := c.runtime.GetVolume(namedVol.Name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("retrieving volume %s to add to container %s: %w", namedVol.Name, c.ID(), err)
+			return nil, fmt.Errorf("retrieving volume %s to add to container %s: %w", namedVol.Name, c.ID(), err)
 		}
 		mountPoint, err := volume.MountPoint()
 		if err != nil {
-			return nil, nil, err
-		}
-
-		if len(namedVol.SubPath) > 0 {
-			safeMount, err := c.safeMountSubPath(mountPoint, namedVol.SubPath)
-			if err != nil {
-				return nil, nil, err
-			}
-			safeMounts = append(safeMounts, safeMount)
-
-			mountPoint = safeMount.mountPoint
+			return nil, err
 		}
 
 		overlayFlag := false
@@ -276,7 +165,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 				overlayFlag = true
 				upperDir, workDir, err = getOverlayUpperAndWorkDir(namedVol.Options)
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 		}
@@ -286,7 +175,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			var overlayOpts *overlay.Options
 			contentDir, err := overlay.TempDir(c.config.StaticDir, c.RootUID(), c.RootGID())
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 
 			overlayOpts = &overlay.Options{RootUID: c.RootUID(),
@@ -298,17 +187,17 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 
 			overlayMount, err = overlay.MountWithOptions(contentDir, mountPoint, namedVol.Dest, overlayOpts)
 			if err != nil {
-				return nil, nil, fmt.Errorf("mounting overlay failed %q: %w", mountPoint, err)
+				return nil, fmt.Errorf("mounting overlay failed %q: %w", mountPoint, err)
 			}
 
 			for _, o := range namedVol.Options {
 				if o == "U" {
 					if err := c.ChangeHostPathOwnership(mountPoint, true, int(hostUID), int(hostGID)); err != nil {
-						return nil, nil, err
+						return nil, err
 					}
 
 					if err := c.ChangeHostPathOwnership(contentDir, true, int(hostUID), int(hostGID)); err != nil {
-						return nil, nil, err
+						return nil, err
 					}
 				}
 			}
@@ -324,47 +213,28 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		}
 	}
 
-	// Check if the spec file mounts contain the options z, Z, U or idmap.
+	// Check if the spec file mounts contain the options z, Z or U.
 	// If they have z or Z, relabel the source directory and then remove the option.
-	// If they have U, chown the source directory and then remove the option.
-	// If they have idmap, then calculate the mappings to use in the OCI config file.
+	// If they have U, chown the source directory and them remove the option.
 	for i := range g.Config.Mounts {
 		m := &g.Config.Mounts[i]
 		var options []string
 		for _, o := range m.Options {
-			if strings.HasPrefix(o, "subpath=") {
-				subpath := strings.Split(o, "=")[1]
-				safeMount, err := c.safeMountSubPath(m.Source, subpath)
-				if err != nil {
-					return nil, nil, err
-				}
-				safeMounts = append(safeMounts, safeMount)
-				m.Source = safeMount.mountPoint
-				continue
-			}
-			if o == "idmap" || strings.HasPrefix(o, "idmap=") {
-				var err error
-				m.UIDMappings, m.GIDMappings, err = parseIDMapMountOption(c.config.IDMappings, o)
-				if err != nil {
-					return nil, nil, err
-				}
-				continue
-			}
 			switch o {
 			case "U":
-				if m.Type == define.TypeTmpfs {
+				if m.Type == "tmpfs" {
 					options = append(options, []string{fmt.Sprintf("uid=%d", execUser.Uid), fmt.Sprintf("gid=%d", execUser.Gid)}...)
 				} else {
 					// only chown on initial creation of container
 					if err := c.ChangeHostPathOwnership(m.Source, true, int(hostUID), int(hostGID)); err != nil {
-						return nil, nil, err
+						return nil, err
 					}
 				}
 			case "z":
 				fallthrough
 			case "Z":
 				if err := c.relabel(m.Source, c.MountLabel(), label.IsShared(o)); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 			default:
@@ -385,7 +255,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			Destination: dstPath,
 			Options:     bindOptions,
 		}
-		if c.IsReadOnly() && (dstPath != "/dev/shm" || !c.config.ReadWriteTmpfs) {
+		if c.IsReadOnly() && dstPath != "/dev/shm" {
 			newMount.Options = append(newMount.Options, "ro", "nosuid", "noexec", "nodev")
 		}
 		if dstPath == "/dev/shm" && c.state.BindMounts["/dev/shm"] == c.config.ShmDir {
@@ -402,11 +272,11 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	for _, overlayVol := range c.config.OverlayVolumes {
 		upperDir, workDir, err := getOverlayUpperAndWorkDir(overlayVol.Options)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		contentDir, err := overlay.TempDir(c.config.StaticDir, c.RootUID(), c.RootGID())
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		overlayOpts := &overlay.Options{RootUID: c.RootUID(),
 			RootGID:                c.RootGID(),
@@ -417,18 +287,18 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 
 		overlayMount, err := overlay.MountWithOptions(contentDir, overlayVol.Source, overlayVol.Dest, overlayOpts)
 		if err != nil {
-			return nil, nil, fmt.Errorf("mounting overlay failed %q: %w", overlayVol.Source, err)
+			return nil, fmt.Errorf("mounting overlay failed %q: %w", overlayVol.Source, err)
 		}
 
 		// Check overlay volume options
 		for _, o := range overlayVol.Options {
 			if o == "U" {
 				if err := c.ChangeHostPathOwnership(overlayVol.Source, true, int(hostUID), int(hostGID)); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 
 				if err := c.ChangeHostPathOwnership(contentDir, true, int(hostUID), int(hostGID)); err != nil {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 		}
@@ -441,16 +311,16 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		// Mount the specified image.
 		img, _, err := c.runtime.LibimageRuntime().LookupImage(volume.Source, nil)
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating image volume %q:%q: %w", volume.Source, volume.Dest, err)
+			return nil, fmt.Errorf("creating image volume %q:%q: %w", volume.Source, volume.Dest, err)
 		}
 		mountPoint, err := img.Mount(ctx, nil, "")
 		if err != nil {
-			return nil, nil, fmt.Errorf("mounting image volume %q:%q: %w", volume.Source, volume.Dest, err)
+			return nil, fmt.Errorf("mounting image volume %q:%q: %w", volume.Source, volume.Dest, err)
 		}
 
 		contentDir, err := overlay.TempDir(c.config.StaticDir, c.RootUID(), c.RootGID())
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to create TempDir in the %s directory: %w", c.config.StaticDir, err)
+			return nil, fmt.Errorf("failed to create TempDir in the %s directory: %w", c.config.StaticDir, err)
 		}
 
 		var overlayMount spec.Mount
@@ -460,14 +330,20 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			overlayMount, err = overlay.MountReadOnly(contentDir, mountPoint, volume.Dest, c.RootUID(), c.RootGID(), c.runtime.store.GraphOptions())
 		}
 		if err != nil {
-			return nil, nil, fmt.Errorf("creating overlay mount for image %q failed: %w", volume.Source, err)
+			return nil, fmt.Errorf("creating overlay mount for image %q failed: %w", volume.Source, err)
 		}
 		g.AddMount(overlayMount)
 	}
 
-	err = c.setHomeEnvIfNeeded()
-	if err != nil {
-		return nil, nil, err
+	hasHomeSet := false
+	for _, s := range c.config.Spec.Process.Env {
+		if strings.HasPrefix(s, "HOME=") {
+			hasHomeSet = true
+			break
+		}
+	}
+	if !hasHomeSet && execUser.Home != "" {
+		c.config.Spec.Process.Env = append(c.config.Spec.Process.Env, fmt.Sprintf("HOME=%s", execUser.Home))
 	}
 
 	if c.config.User != "" {
@@ -478,10 +354,11 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	}
 
 	if c.config.Umask != "" {
-		umask, err := c.umask()
+		decVal, err := strconv.ParseUint(c.config.Umask, 8, 32)
 		if err != nil {
-			return nil, nil, err
+			return nil, fmt.Errorf("invalid Umask Value: %w", err)
 		}
+		umask := uint32(decVal)
 		g.Config.Process.User.Umask = &umask
 	}
 
@@ -489,7 +366,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	if len(c.config.Groups) > 0 {
 		gids, err := lookup.GetContainerGroups(c.config.Groups, c.state.Mountpoint, overrides)
 		if err != nil {
-			return nil, nil, fmt.Errorf("looking up supplemental groups for container %s: %w", c.ID(), err)
+			return nil, fmt.Errorf("looking up supplemental groups for container %s: %w", c.ID(), err)
 		}
 		for _, gid := range gids {
 			g.AddProcessAdditionalGid(gid)
@@ -497,7 +374,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	}
 
 	if err := c.addSystemdMounts(&g); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Look up and add groups the user belongs to, if a group wasn't directly specified
@@ -512,7 +389,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 			// Check whether the current user namespace has enough gids available.
 			availableGids, err := rootless.GetAvailableGids()
 			if err != nil {
-				return nil, nil, fmt.Errorf("cannot read number of available GIDs: %w", err)
+				return nil, fmt.Errorf("cannot read number of available GIDs: %w", err)
 			}
 			gidMappings = []idtools.IDMap{{
 				ContainerID: 0,
@@ -544,18 +421,19 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 
 	// Add shared namespaces from other containers
 	if err := c.addSharedNamespaces(&g); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	g.SetRootPath(c.state.Mountpoint)
-	g.AddAnnotation("org.opencontainers.image.stopSignal", strconv.FormatUint(uint64(c.config.StopSignal), 10))
+	g.AddAnnotation(annotations.Created, c.config.CreatedTime.Format(time.RFC3339Nano))
+	g.AddAnnotation("org.opencontainers.image.stopSignal", fmt.Sprintf("%d", c.config.StopSignal))
 
 	if _, exists := g.Config.Annotations[annotations.ContainerManager]; !exists {
 		g.AddAnnotation(annotations.ContainerManager, annotations.ContainerManagerLibpod)
 	}
 
 	if err := c.setCgroupsPath(&g); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Warning: CDI may alter g.Config in place.
@@ -568,7 +446,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		}
 		_, err := registry.InjectDevices(g.Config, c.config.CDIDevices...)
 		if err != nil {
-			return nil, nil, fmt.Errorf("setting up CDI devices: %w", err)
+			return nil, fmt.Errorf("setting up CDI devices: %w", err)
 		}
 	}
 
@@ -581,10 +459,10 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		// Runc and other runtimes may choke on them.
 		// Easy solution: use securejoin to do a scoped evaluation of
 		// the links, then trim off the mount prefix.
-		if m.Type == define.TypeTmpfs {
+		if m.Type == "tmpfs" {
 			finalPath, err := securejoin.SecureJoin(c.state.Mountpoint, m.Destination)
 			if err != nil {
-				return nil, nil, fmt.Errorf("resolving symlinks for mount destination %s: %w", m.Destination, err)
+				return nil, fmt.Errorf("resolving symlinks for mount destination %s: %w", m.Destination, err)
 			}
 			trimmedPath := strings.TrimPrefix(finalPath, strings.TrimSuffix(c.state.Mountpoint, "/"))
 			m.Destination = trimmedPath
@@ -593,25 +471,25 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	}
 
 	if err := c.addRootPropagation(&g, mounts); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Warning: precreate hooks may alter g.Config in place.
 	if c.state.ExtensionStageHooks, err = c.setupOCIHooks(ctx, g.Config); err != nil {
-		return nil, nil, fmt.Errorf("setting up OCI Hooks: %w", err)
+		return nil, fmt.Errorf("setting up OCI Hooks: %w", err)
 	}
 	if len(c.config.EnvSecrets) > 0 {
 		manager, err := c.runtime.SecretsManager()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		for name, secr := range c.config.EnvSecrets {
 			_, data, err := manager.LookupSecretData(secr.Name)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			g.AddProcessEnv(name, string(data))
 		}
@@ -629,61 +507,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		}
 	}
 
-	// setup rlimits
-	nofileSet := false
-	nprocSet := false
-	isRootless := rootless.IsRootless()
-	if isRootless {
-		if g.Config.Process != nil && g.Config.Process.OOMScoreAdj != nil {
-			var err error
-			*g.Config.Process.OOMScoreAdj, err = maybeClampOOMScoreAdj(*g.Config.Process.OOMScoreAdj)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-		for _, rlimit := range c.config.Spec.Process.Rlimits {
-			if rlimit.Type == "RLIMIT_NOFILE" {
-				nofileSet = true
-			}
-			if rlimit.Type == "RLIMIT_NPROC" {
-				nprocSet = true
-			}
-		}
-		if !nofileSet {
-			max := rlimT(define.RLimitDefaultValue)
-			current := rlimT(define.RLimitDefaultValue)
-			var rlimit unix.Rlimit
-			if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &rlimit); err != nil {
-				logrus.Warnf("Failed to return RLIMIT_NOFILE ulimit %q", err)
-			}
-			if rlimT(rlimit.Cur) < current {
-				current = rlimT(rlimit.Cur)
-			}
-			if rlimT(rlimit.Max) < max {
-				max = rlimT(rlimit.Max)
-			}
-			g.AddProcessRlimits("RLIMIT_NOFILE", uint64(max), uint64(current))
-		}
-		if !nprocSet {
-			max := rlimT(define.RLimitDefaultValue)
-			current := rlimT(define.RLimitDefaultValue)
-			var rlimit unix.Rlimit
-			if err := unix.Getrlimit(unix.RLIMIT_NPROC, &rlimit); err != nil {
-				logrus.Warnf("Failed to return RLIMIT_NPROC ulimit %q", err)
-			}
-			if rlimT(rlimit.Cur) < current {
-				current = rlimT(rlimit.Cur)
-			}
-			if rlimT(rlimit.Max) < max {
-				max = rlimT(rlimit.Max)
-			}
-			g.AddProcessRlimits("RLIMIT_NPROC", uint64(max), uint64(current))
-		}
-	}
-
-	c.addMaskedPaths(&g)
-
-	return g.Config, cleanupFunc, nil
+	return g.Config, nil
 }
 
 // isWorkDirSymlink returns true if resolved workdir is symlink or a chain of symlinks,
@@ -832,12 +656,12 @@ func lookupHostUser(name string) (*runcuser.ExecUser, error) {
 	if err != nil {
 		return &execUser, err
 	}
-	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	uid, err := strconv.ParseUint(u.Uid, 8, 32)
 	if err != nil {
 		return &execUser, err
 	}
 
-	gid, err := strconv.ParseUint(u.Gid, 10, 32)
+	gid, err := strconv.ParseUint(u.Gid, 8, 32)
 	if err != nil {
 		return &execUser, err
 	}
@@ -1149,8 +973,8 @@ func (c *Container) exportCheckpoint(options ContainerCheckpointOptions) error {
 }
 
 func (c *Container) checkpointRestoreSupported(version int) error {
-	if err := criu.CheckForCriu(version); err != nil {
-		return err
+	if !criu.CheckForCriu(version) {
+		return fmt.Errorf("checkpoint/restore requires at least CRIU %d", version)
 	}
 	if !c.ociRuntime.SupportsCheckpoint() {
 		return errors.New("configured runtime does not support checkpoint/restore")
@@ -1308,6 +1132,7 @@ func (c *Container) generateContainerSpec() error {
 
 	// NewFromSpec() is deprecated according to its comment
 	// however the recommended replace just causes a nil map panic
+	//nolint:staticcheck
 	g := generate.NewFromSpec(c.config.Spec)
 
 	if err := c.saveSpec(g.Config); err != nil {
@@ -1417,7 +1242,7 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 	}
 
 	// Let's try to stat() CRIU's inventory file. If it does not exist, it makes
-	// no sense to try a restore. This is a minimal check if a checkpoint exists.
+	// no sense to try a restore. This is a minimal check if a checkpoint exist.
 	if _, err := os.Stat(filepath.Join(c.CheckpointPath(), "inventory.img")); os.IsNotExist(err) {
 		return nil, 0, fmt.Errorf("a complete checkpoint for this container cannot be found, cannot restore: %w", err)
 	}
@@ -1429,25 +1254,6 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 	// Setting RestoreLog early in case there is a failure.
 	c.state.RestoreLog = path.Join(c.bundlePath(), "restore.log")
 	c.state.CheckpointPath = c.CheckpointPath()
-
-	if options.IgnoreStaticIP || options.IgnoreStaticMAC {
-		networks, err := c.networks()
-		if err != nil {
-			return nil, 0, err
-		}
-
-		for net, opts := range networks {
-			if options.IgnoreStaticIP {
-				opts.StaticIPs = nil
-			}
-			if options.IgnoreStaticMAC {
-				opts.StaticMAC = nil
-			}
-			if err := c.runtime.state.NetworkModify(c, net, opts); err != nil {
-				return nil, 0, fmt.Errorf("failed to rewrite network config: %w", err)
-			}
-		}
-	}
 
 	// Read network configuration from checkpoint
 	var netStatus map[string]types.StatusBlock
@@ -1476,7 +1282,7 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 			perNetOpts.StaticIPs = nil
 			for name, netInt := range netStatus[network].Interfaces {
 				perNetOpts.InterfaceName = name
-				if !options.IgnoreStaticMAC {
+				if !options.IgnoreStaticIP {
 					perNetOpts.StaticMAC = netInt.MacAddress
 				}
 				if !options.IgnoreStaticIP {
@@ -1608,12 +1414,12 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 	if options.TargetFile != "" || options.CheckpointImageID != "" {
 		for dstPath, srcPath := range c.state.BindMounts {
 			newMount := spec.Mount{
-				Type:        define.TypeBind,
+				Type:        "bind",
 				Source:      srcPath,
 				Destination: dstPath,
-				Options:     []string{define.TypeBind, "private"},
+				Options:     []string{"bind", "private"},
 			}
-			if c.IsReadOnly() && (dstPath != "/dev/shm" || !c.config.ReadWriteTmpfs) {
+			if c.IsReadOnly() && dstPath != "/dev/shm" {
 				newMount.Options = append(newMount.Options, "ro", "nosuid", "noexec", "nodev")
 			}
 			if dstPath == "/dev/shm" && c.state.BindMounts["/dev/shm"] == c.config.ShmDir {
@@ -1833,17 +1639,17 @@ func (c *Container) makeBindMounts() error {
 		// will recreate. Only do this if we aren't sharing them with
 		// another container.
 		if c.config.NetNsCtr == "" {
-			if resolvePath, ok := c.state.BindMounts[resolvconf.DefaultResolvConf]; ok {
+			if resolvePath, ok := c.state.BindMounts["/etc/resolv.conf"]; ok {
 				if err := os.Remove(resolvePath); err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("container %s: %w", c.ID(), err)
 				}
-				delete(c.state.BindMounts, resolvconf.DefaultResolvConf)
+				delete(c.state.BindMounts, "/etc/resolv.conf")
 			}
-			if hostsPath, ok := c.state.BindMounts[config.DefaultHostsFile]; ok {
+			if hostsPath, ok := c.state.BindMounts["/etc/hosts"]; ok {
 				if err := os.Remove(hostsPath); err != nil && !os.IsNotExist(err) {
 					return fmt.Errorf("container %s: %w", c.ID(), err)
 				}
-				delete(c.state.BindMounts, config.DefaultHostsFile)
+				delete(c.state.BindMounts, "/etc/hosts")
 			}
 		}
 
@@ -1865,9 +1671,9 @@ func (c *Container) makeBindMounts() error {
 
 			// The other container may not have a resolv.conf or /etc/hosts
 			// If it doesn't, don't copy them
-			resolvPath, exists := bindMounts[resolvconf.DefaultResolvConf]
+			resolvPath, exists := bindMounts["/etc/resolv.conf"]
 			if !c.config.UseImageResolvConf && exists {
-				err := c.mountIntoRootDirs(resolvconf.DefaultResolvConf, resolvPath)
+				err := c.mountIntoRootDirs("/etc/resolv.conf", resolvPath)
 
 				if err != nil {
 					return fmt.Errorf("assigning mounts to container %s: %w", c.ID(), err)
@@ -1879,7 +1685,7 @@ func (c *Container) makeBindMounts() error {
 			hostsPath, exists := bindMounts[config.DefaultHostsFile]
 			if !c.config.UseImageHosts && exists {
 				// we cannot use the dependency container lock due ABBA deadlocks in cleanup()
-				lock, err := lockfile.GetLockFile(hostsPath)
+				lock, err := lockfile.GetLockfile(hostsPath)
 				if err != nil {
 					return fmt.Errorf("failed to lock hosts file: %w", err)
 				}
@@ -1910,31 +1716,31 @@ func (c *Container) makeBindMounts() error {
 			}
 		} else {
 			if !c.config.UseImageResolvConf {
-				if err := c.createResolvConf(); err != nil {
+				if err := c.generateResolvConf(); err != nil {
 					return fmt.Errorf("creating resolv.conf for container %s: %w", c.ID(), err)
 				}
 			}
 
 			if !c.config.UseImageHosts {
-				if err := c.createHostsFile(); err != nil {
+				if err := c.createHosts(); err != nil {
 					return fmt.Errorf("creating hosts file for container %s: %w", c.ID(), err)
 				}
 			}
 		}
 
-		if c.state.BindMounts[config.DefaultHostsFile] != "" {
-			if err := c.relabel(c.state.BindMounts[config.DefaultHostsFile], c.config.MountLabel, true); err != nil {
+		if c.state.BindMounts["/etc/hosts"] != "" {
+			if err := c.relabel(c.state.BindMounts["/etc/hosts"], c.config.MountLabel, true); err != nil {
 				return err
 			}
 		}
 
-		if c.state.BindMounts[resolvconf.DefaultResolvConf] != "" {
-			if err := c.relabel(c.state.BindMounts[resolvconf.DefaultResolvConf], c.config.MountLabel, true); err != nil {
+		if c.state.BindMounts["/etc/resolv.conf"] != "" {
+			if err := c.relabel(c.state.BindMounts["/etc/resolv.conf"], c.config.MountLabel, true); err != nil {
 				return err
 			}
 		}
-	} else if !c.config.UseImageHosts && c.state.BindMounts[config.DefaultHostsFile] == "" {
-		if err := c.createHostsFile(); err != nil {
+	} else if !c.config.UseImageHosts && c.state.BindMounts["/etc/hosts"] == "" {
+		if err := c.createHosts(); err != nil {
 			return fmt.Errorf("creating hosts file for container %s: %w", c.ID(), err)
 		}
 	}
@@ -1963,24 +1769,45 @@ func (c *Container) makeBindMounts() error {
 		}
 	}
 
-	runPath, err := c.getPlatformRunPath()
-	if err != nil {
-		return fmt.Errorf("cannot determine run directory for container: %w", err)
+	// Make /etc/localtime
+	ctrTimezone := c.Timezone()
+	if ctrTimezone != "" {
+		// validate the format of the timezone specified if it's not "local"
+		if ctrTimezone != "local" {
+			_, err = time.LoadLocation(ctrTimezone)
+			if err != nil {
+				return fmt.Errorf("finding timezone for container %s: %w", c.ID(), err)
+			}
+		}
+		if _, ok := c.state.BindMounts["/etc/localtime"]; !ok {
+			var zonePath string
+			if ctrTimezone == "local" {
+				zonePath, err = filepath.EvalSymlinks("/etc/localtime")
+				if err != nil {
+					return fmt.Errorf("finding local timezone for container %s: %w", c.ID(), err)
+				}
+			} else {
+				zone := filepath.Join("/usr/share/zoneinfo", ctrTimezone)
+				zonePath, err = filepath.EvalSymlinks(zone)
+				if err != nil {
+					return fmt.Errorf("setting timezone for container %s: %w", c.ID(), err)
+				}
+			}
+			localtimePath, err := c.copyTimezoneFile(zonePath)
+			if err != nil {
+				return fmt.Errorf("setting timezone for container %s: %w", c.ID(), err)
+			}
+			c.state.BindMounts["/etc/localtime"] = localtimePath
+		}
 	}
-	containerenvPath := filepath.Join(runPath, ".containerenv")
 
-	_, hasRunContainerenv := c.state.BindMounts[containerenvPath]
+	_, hasRunContainerenv := c.state.BindMounts["/run/.containerenv"]
 	if !hasRunContainerenv {
-	Loop:
 		// check in the spec mounts
 		for _, m := range c.config.Spec.Mounts {
-			switch {
-			case m.Destination == containerenvPath:
+			if m.Destination == "/run/.containerenv" || m.Destination == "/run" {
 				hasRunContainerenv = true
-				break Loop
-			case m.Destination == runPath && m.Type != define.TypeTmpfs:
-				hasRunContainerenv = true
-				break Loop
+				break
 			}
 		}
 	}
@@ -2004,11 +1831,11 @@ imageid=%q
 rootless=%d
 %s`, version.Version.String(), c.Name(), c.ID(), imageName, imageID, isRootless, containerenv)
 		}
-		containerenvHostPath, err := c.writeStringToRundir(".containerenv", containerenv)
+		containerenvPath, err := c.writeStringToRundir(".containerenv", containerenv)
 		if err != nil {
 			return fmt.Errorf("creating containerenv file for container %s: %w", c.ID(), err)
 		}
-		c.state.BindMounts[containerenvPath] = containerenvHostPath
+		c.state.BindMounts["/run/.containerenv"] = containerenvPath
 	}
 
 	// Add Subscription Mounts
@@ -2026,12 +1853,12 @@ rootless=%d
 	// creates the /run/secrets dir in the container where we mount as well.
 	if len(c.Secrets()) > 0 {
 		// create /run/secrets if subscriptions did not create
-		if err := c.createSecretMountDir(runPath); err != nil {
+		if err := c.createSecretMountDir(); err != nil {
 			return fmt.Errorf("creating secrets mount: %w", err)
 		}
 		for _, secret := range c.Secrets() {
 			secretFileName := secret.Name
-			base := filepath.Join(runPath, "secrets")
+			base := "/run/secrets"
 			if secret.Target != "" {
 				secretFileName = secret.Target
 				// If absolute path for target given remove base.
@@ -2048,25 +1875,8 @@ rootless=%d
 	return c.makePlatformBindMounts()
 }
 
-// createResolvConf create the resolv.conf file and bind mount it
-func (c *Container) createResolvConf() error {
-	destPath := filepath.Join(c.state.RunDir, "resolv.conf")
-	f, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	f.Close()
-	return c.bindMountRootFile(destPath, resolvconf.DefaultResolvConf)
-}
-
-// addResolvConf add resolv.conf entries
-func (c *Container) addResolvConf() error {
-	destPath, ok := c.state.BindMounts[resolvconf.DefaultResolvConf]
-	if !ok {
-		// no resolv.conf mount, do nothing
-		return nil
-	}
-
+// generateResolvConf generates a containers resolv.conf
+func (c *Container) generateResolvConf() error {
 	var (
 		networkNameServers   []string
 		networkSearchDomains []string
@@ -2086,52 +1896,41 @@ func (c *Container) addResolvConf() error {
 		}
 	}
 
-	ipv6 := c.checkForIPv6(netStatus)
+	ipv6, err := c.checkForIPv6(netStatus)
+	if err != nil {
+		return err
+	}
 
-	networkBackend := c.runtime.config.Network.NetworkBackend
-	nameservers := make([]string, 0, len(c.runtime.config.Containers.DNSServers.Get())+len(c.config.DNSServer))
-
-	// If NetworkBackend is `netavark` do not populate `/etc/resolv.conf`
-	// with custom dns server since after https://github.com/containers/netavark/pull/452
-	// netavark will always set required `nameservers` in StatusBlock and libpod
-	// will correctly populate `networkNameServers`. Also see https://github.com/containers/podman/issues/16172
-
-	// Exception: Populate `/etc/resolv.conf` if container is not connected to any network
-	// with dns enabled then we do not get any nameservers back.
-	if networkBackend != string(types.Netavark) || len(networkNameServers) == 0 {
-		nameservers = append(nameservers, c.runtime.config.Containers.DNSServers.Get()...)
-		for _, ip := range c.config.DNSServer {
-			nameservers = append(nameservers, ip.String())
-		}
+	nameservers := make([]string, 0, len(c.runtime.config.Containers.DNSServers)+len(c.config.DNSServer))
+	nameservers = append(nameservers, c.runtime.config.Containers.DNSServers...)
+	for _, ip := range c.config.DNSServer {
+		nameservers = append(nameservers, ip.String())
 	}
 	// If the user provided dns, it trumps all; then dns masq; then resolv.conf
+	var search []string
 	keepHostServers := false
 	if len(nameservers) == 0 {
-		// when no network name servers or not netavark use host servers
-		// for aardvark dns we only want our single server in there
-		if len(networkNameServers) == 0 || networkBackend != string(types.Netavark) {
-			keepHostServers = true
-		}
+		keepHostServers = true
 		// first add the nameservers from the networks status
 		nameservers = networkNameServers
-
+		// when we add network dns server we also have to add the search domains
+		search = networkSearchDomains
 		// slirp4netns has a built in DNS forwarder.
 		nameservers = c.addSlirp4netnsDNS(nameservers)
 	}
 
-	// Set DNS search domains
-	search := networkSearchDomains
-
-	if len(c.config.DNSSearch) > 0 || len(c.runtime.config.Containers.DNSSearches.Get()) > 0 {
-		customSearch := make([]string, 0, len(c.config.DNSSearch)+len(c.runtime.config.Containers.DNSSearches.Get()))
-		customSearch = append(customSearch, c.runtime.config.Containers.DNSSearches.Get()...)
+	if len(c.config.DNSSearch) > 0 || len(c.runtime.config.Containers.DNSSearches) > 0 {
+		customSearch := make([]string, 0, len(c.config.DNSSearch)+len(c.runtime.config.Containers.DNSSearches))
+		customSearch = append(customSearch, c.runtime.config.Containers.DNSSearches...)
 		customSearch = append(customSearch, c.config.DNSSearch...)
 		search = customSearch
 	}
 
-	options := make([]string, 0, len(c.config.DNSOption)+len(c.runtime.config.Containers.DNSOptions.Get()))
-	options = append(options, c.runtime.config.Containers.DNSOptions.Get()...)
+	options := make([]string, 0, len(c.config.DNSOption)+len(c.runtime.config.Containers.DNSOptions))
+	options = append(options, c.runtime.config.Containers.DNSOptions...)
 	options = append(options, c.config.DNSOption...)
+
+	destPath := filepath.Join(c.state.RunDir, "resolv.conf")
 
 	var namespaces []spec.LinuxNamespace
 	if c.config.Spec.Linux != nil {
@@ -2150,17 +1949,17 @@ func (c *Container) addResolvConf() error {
 		return fmt.Errorf("building resolv.conf for container %s: %w", c.ID(), err)
 	}
 
-	return nil
+	return c.bindMountRootFile(destPath, resolvconf.DefaultResolvConf)
 }
 
 // Check if a container uses IPv6.
-func (c *Container) checkForIPv6(netStatus map[string]types.StatusBlock) bool {
+func (c *Container) checkForIPv6(netStatus map[string]types.StatusBlock) (bool, error) {
 	for _, status := range netStatus {
 		for _, netInt := range status.Interfaces {
 			for _, netAddress := range netInt.Subnets {
 				// Note: only using To16() does not work since it also returns a valid ip for ipv4
 				if netAddress.IPNet.IP.To4() == nil && netAddress.IPNet.IP.To16() != nil {
-					return true
+					return true, nil
 				}
 			}
 		}
@@ -2223,14 +2022,8 @@ func (c *Container) getHostsEntries() (etchosts.HostEntries, error) {
 	switch {
 	case c.config.NetMode.IsBridge():
 		entries = etchosts.GetNetworkHostEntries(c.state.NetworkStatus, names...)
-	case c.config.NetMode.IsPasta():
-		ip, err := getPastaIP(c.state)
-		if err != nil {
-			return nil, err
-		}
-		entries = etchosts.HostEntries{{IP: ip.String(), Names: names}}
 	case c.config.NetMode.IsSlirp4netns():
-		ip, err := getSlirp4netnsIP(c.slirp4netnsSubnet)
+		ip, err := GetSlirp4netnsIP(c.slirp4netnsSubnet)
 		if err != nil {
 			return nil, err
 		}
@@ -2243,38 +2036,36 @@ func (c *Container) getHostsEntries() (etchosts.HostEntries, error) {
 	return entries, nil
 }
 
-func (c *Container) createHostsFile() error {
-	targetFile := filepath.Join(c.state.RunDir, "hosts")
-	f, err := os.Create(targetFile)
-	if err != nil {
-		return err
-	}
-	f.Close()
-	return c.bindMountRootFile(targetFile, config.DefaultHostsFile)
-}
-
-func (c *Container) addHosts() error {
-	targetFile, ok := c.state.BindMounts[config.DefaultHostsFile]
-	if !ok {
-		// no host file nothing to do
-		return nil
-	}
-	containerIPsEntries, err := c.getHostsEntries()
-	if err != nil {
-		return fmt.Errorf("failed to get container ip host entries: %w", err)
+func (c *Container) createHosts() error {
+	var containerIPsEntries etchosts.HostEntries
+	var err error
+	// if we configure the netns after the container create we should not add
+	// the hosts here since we have no information about the actual ips
+	// instead we will add them in c.completeNetworkSetup()
+	if !c.config.PostConfigureNetNS {
+		containerIPsEntries, err = c.getHostsEntries()
+		if err != nil {
+			return fmt.Errorf("failed to get container ip host entries: %w", err)
+		}
 	}
 	baseHostFile, err := etchosts.GetBaseHostFile(c.runtime.config.Containers.BaseHostsFile, c.state.Mountpoint)
 	if err != nil {
 		return err
 	}
 
-	return etchosts.New(&etchosts.Params{
+	targetFile := filepath.Join(c.state.RunDir, "hosts")
+	err = etchosts.New(&etchosts.Params{
 		BaseFile:                 baseHostFile,
 		ExtraHosts:               c.config.HostAdd,
 		ContainerIPs:             containerIPsEntries,
 		HostContainersInternalIP: etchosts.GetHostContainersInternalIP(c.runtime.config, c.state.NetworkStatus, c.runtime.network),
 		TargetFile:               targetFile,
 	})
+	if err != nil {
+		return err
+	}
+
+	return c.bindMountRootFile(targetFile, config.DefaultHostsFile)
 }
 
 // bindMountRootFile will chown and relabel the source file to make it usable in the container.
@@ -2316,7 +2107,7 @@ func (c *Container) generateGroupEntry() (string, error) {
 		groupString += entry
 		addedGID = gid
 	}
-	if c.config.User != "" || c.config.GroupEntry != "" {
+	if c.config.User != "" {
 		entry, err := c.generateUserGroupEntry(addedGID)
 		if err != nil {
 			return "", err
@@ -2371,7 +2162,7 @@ func (c *Container) generateCurrentUserGroupEntry() (string, int, error) {
 // Make an entry in /etc/group for the group the container was specified to run
 // as.
 func (c *Container) generateUserGroupEntry(addedGID int) (string, error) {
-	if c.config.User == "" && c.config.GroupEntry == "" {
+	if c.config.User == "" {
 		return "", nil
 	}
 
@@ -2391,24 +2182,12 @@ func (c *Container) generateUserGroupEntry(addedGID int) (string, error) {
 	}
 
 	// Check if the group already exists
-	g, err := lookup.GetGroup(c.state.Mountpoint, group)
+	_, err = lookup.GetGroup(c.state.Mountpoint, group)
 	if err != runcuser.ErrNoGroupEntries {
 		return "", err
 	}
 
-	if c.config.GroupEntry != "" {
-		return c.groupEntry(g.Name, strconv.Itoa(g.Gid), g.List), nil
-	}
-
 	return fmt.Sprintf("%d:x:%d:%s\n", gid, gid, splitUser[0]), nil
-}
-
-func (c *Container) groupEntry(groupname, gid string, list []string) string {
-	s := c.config.GroupEntry
-	s = strings.ReplaceAll(s, "$GROUPNAME", groupname)
-	s = strings.ReplaceAll(s, "$GID", gid)
-	s = strings.ReplaceAll(s, "$USERLIST", strings.Join(list, ","))
-	return s + "\n"
 }
 
 // generatePasswdEntry generates an entry or entries into /etc/passwd as
@@ -2420,7 +2199,7 @@ func (c *Container) groupEntry(groupname, gid string, list []string) string {
 //     /etc/passwd via AddCurrentUserPasswdEntry (though this does not trigger if
 //     the user in question already exists in /etc/passwd) or the UID to be added
 //     is 0).
-//  3. The user specified additional host user accounts to add to the /etc/passwd file
+//  3. The user specified additional host user accounts to add the the /etc/passwd file
 //
 // Returns password entry (as a string that can be appended to /etc/passwd) and
 // any error that occurred.
@@ -2480,40 +2259,6 @@ func (c *Container) generateCurrentUserPasswdEntry() (string, int, int, error) {
 	return pwd, uid, rootless.GetRootlessGID(), nil
 }
 
-// Sets the HOME env. variable with precedence: existing home env. variable, execUser home
-func (c *Container) setHomeEnvIfNeeded() error {
-	getExecUserHome := func() (string, error) {
-		overrides := c.getUserOverrides()
-		execUser, err := lookup.GetUserGroupInfo(c.state.Mountpoint, c.config.User, overrides)
-		if err != nil {
-			if cutil.StringInSlice(c.config.User, c.config.HostUsers) {
-				execUser, err = lookupHostUser(c.config.User)
-			}
-
-			if err != nil {
-				return "", err
-			}
-		}
-
-		return execUser.Home, nil
-	}
-
-	// Ensure HOME is not already set in Env
-	for _, s := range c.config.Spec.Process.Env {
-		if strings.HasPrefix(s, "HOME=") {
-			return nil
-		}
-	}
-
-	home, err := getExecUserHome()
-	if err != nil {
-		return err
-	}
-
-	c.config.Spec.Process.Env = append(c.config.Spec.Process.Env, fmt.Sprintf("HOME=%s", home))
-	return nil
-}
-
 func (c *Container) userPasswdEntry(u *user.User) (string, error) {
 	// Look up the user to see if it exists in the container image.
 	_, err := lookup.GetUser(c.state.Mountpoint, u.Username)
@@ -2546,7 +2291,17 @@ func (c *Container) userPasswdEntry(u *user.User) (string, error) {
 			}
 		}
 	}
-
+	// Set HOME environment if not already set
+	hasHomeSet := false
+	for _, s := range c.config.Spec.Process.Env {
+		if strings.HasPrefix(s, "HOME=") {
+			hasHomeSet = true
+			break
+		}
+	}
+	if !hasHomeSet {
+		c.config.Spec.Process.Env = append(c.config.Spec.Process.Env, fmt.Sprintf("HOME=%s", homeDir))
+	}
 	if c.config.PasswdEntry != "" {
 		return c.passwdEntry(u.Username, u.Uid, u.Gid, u.Name, homeDir), nil
 	}
@@ -2603,18 +2358,14 @@ func (c *Container) generateUserPasswdEntry(addedUID int) (string, error) {
 	}
 
 	if c.config.PasswdEntry != "" {
-		entry := c.passwdEntry(strconv.FormatUint(uid, 10), strconv.FormatUint(uid, 10), strconv.FormatInt(int64(gid), 10), "container user", c.WorkingDir())
+		entry := c.passwdEntry(fmt.Sprintf("%d", uid), fmt.Sprintf("%d", uid), fmt.Sprintf("%d", gid), "container user", c.WorkingDir())
 		return entry, nil
 	}
 
-	u, err := user.LookupId(strconv.FormatUint(uid, 10))
-	if err == nil {
-		return fmt.Sprintf("%s:*:%d:%d:%s:%s:/bin/sh\n", u.Username, uid, gid, u.Name, c.WorkingDir()), nil
-	}
 	return fmt.Sprintf("%d:*:%d:%d:container user:%s:/bin/sh\n", uid, uid, gid, c.WorkingDir()), nil
 }
 
-func (c *Container) passwdEntry(username, uid, gid, name, homeDir string) string {
+func (c *Container) passwdEntry(username string, uid, gid, name, homeDir string) string {
 	s := c.config.PasswdEntry
 	s = strings.ReplaceAll(s, "$USERNAME", username)
 	s = strings.ReplaceAll(s, "$UID", uid)
@@ -2638,7 +2389,7 @@ func (c *Container) passwdEntry(username, uid, gid, name, homeDir string) string
 // read-only. In this case, the function will return nothing ("", "", nil).
 func (c *Container) generatePasswdAndGroup() (string, string, error) {
 	if !c.config.AddCurrentUserPasswdEntry && c.config.User == "" &&
-		len(c.config.HostUsers) == 0 && c.config.GroupEntry == "" {
+		len(c.config.HostUsers) == 0 {
 		return "", "", nil
 	}
 
@@ -2813,11 +2564,14 @@ func (c *Container) cleanupOverlayMounts() error {
 }
 
 // Creates and mounts an empty dir to mount secrets into, if it does not already exist
-func (c *Container) createSecretMountDir(runPath string) error {
+func (c *Container) createSecretMountDir() error {
 	src := filepath.Join(c.state.RunDir, "/run/secrets")
 	_, err := os.Stat(src)
 	if os.IsNotExist(err) {
-		if err := umask.MkdirAllIgnoreUmask(src, os.FileMode(0o755)); err != nil {
+		oldUmask := umask.Set(0)
+		defer umask.Set(oldUmask)
+
+		if err := os.MkdirAll(src, 0755); err != nil {
 			return err
 		}
 		if err := label.Relabel(src, c.config.MountLabel, false); err != nil {
@@ -2826,7 +2580,7 @@ func (c *Container) createSecretMountDir(runPath string) error {
 		if err := os.Chown(src, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
-		c.state.BindMounts[filepath.Join(runPath, "secrets")] = src
+		c.state.BindMounts["/run/secrets"] = src
 		return nil
 	}
 
@@ -2850,7 +2604,7 @@ func (c *Container) fixVolumePermissions(v *ContainerNamedVolume) error {
 
 	// Volumes owned by a volume driver are not chowned - we don't want to
 	// mess with a mount not managed by us.
-	if vol.state.NeedsChown && (!vol.UsesVolumeDriver() && vol.config.Driver != "image") {
+	if vol.state.NeedsChown && !vol.UsesVolumeDriver() {
 		vol.state.NeedsChown = false
 
 		uid := int(c.config.Spec.Process.User.UID)
@@ -2940,28 +2694,4 @@ func (c *Container) ChangeHostPathOwnership(src string, recurse bool, uid, gid i
 		}
 	}
 	return chown.ChangeHostPathOwnership(src, recurse, uid, gid)
-}
-
-func (c *Container) umask() (uint32, error) {
-	decVal, err := strconv.ParseUint(c.config.Umask, 8, 32)
-	if err != nil {
-		return 0, fmt.Errorf("invalid Umask Value: %w", err)
-	}
-	return uint32(decVal), nil
-}
-
-func maybeClampOOMScoreAdj(oomScoreValue int) (int, error) {
-	v, err := os.ReadFile("/proc/self/oom_score_adj")
-	if err != nil {
-		return oomScoreValue, err
-	}
-	currentValue, err := strconv.Atoi(strings.TrimRight(string(v), "\n"))
-	if err != nil {
-		return oomScoreValue, err
-	}
-	if currentValue > oomScoreValue {
-		logrus.Warnf("Requested oom_score_adj=%d is lower than the current one, changing to %d", oomScoreValue, currentValue)
-		return currentValue, nil
-	}
-	return oomScoreValue, nil
 }

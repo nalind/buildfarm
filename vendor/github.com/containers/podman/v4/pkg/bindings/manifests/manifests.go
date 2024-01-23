@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/common/libimage/define"
 	"github.com/containers/image/v5/manifest"
 	imageTypes "github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/pkg/auth"
@@ -72,76 +71,19 @@ func Exists(ctx context.Context, name string, options *ExistsOptions) (bool, err
 }
 
 // Inspect returns a manifest list for a given name.
-func Inspect(ctx context.Context, name string, options *InspectOptions) (*manifest.Schema2List, error) {
+func Inspect(ctx context.Context, name string, _ *InspectOptions) (*manifest.Schema2List, error) {
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if options == nil {
-		options = new(InspectOptions)
-	}
 
-	params, err := options.ToParams()
-	if err != nil {
-		return nil, err
-	}
-	// SkipTLSVerify is special.  We need to delete the param added by
-	// ToParams() and change the key and flip the bool
-	if options.SkipTLSVerify != nil {
-		params.Del("SkipTLSVerify")
-		params.Set("tlsVerify", strconv.FormatBool(!options.GetSkipTLSVerify()))
-	}
-
-	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, "", "")
-	if err != nil {
-		return nil, err
-	}
-
-	response, err := conn.DoRequest(ctx, nil, http.MethodGet, "/manifests/%s/json", params, header, name)
+	response, err := conn.DoRequest(ctx, nil, http.MethodGet, "/manifests/%s/json", nil, nil, name)
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
 
 	var list manifest.Schema2List
-	return &list, response.Process(&list)
-}
-
-// InspectListData returns a manifest list for a given name.
-// Contains exclusive field like `annotations` which is only
-// present in OCI spec and not in docker image spec.
-func InspectListData(ctx context.Context, name string, options *InspectOptions) (*define.ManifestListData, error) {
-	conn, err := bindings.GetClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if options == nil {
-		options = new(InspectOptions)
-	}
-
-	params, err := options.ToParams()
-	if err != nil {
-		return nil, err
-	}
-	// SkipTLSVerify is special.  We need to delete the param added by
-	// ToParams() and change the key and flip the bool
-	if options.SkipTLSVerify != nil {
-		params.Del("SkipTLSVerify")
-		params.Set("tlsVerify", strconv.FormatBool(!options.GetSkipTLSVerify()))
-	}
-
-	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, "", "")
-	if err != nil {
-		return nil, err
-	}
-
-	response, err := conn.DoRequest(ctx, nil, http.MethodGet, "/manifests/%s/json", params, header, name)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	var list define.ManifestListData
 	return &list, response.Process(&list)
 }
 
@@ -257,7 +199,7 @@ func Push(ctx context.Context, name, destination string, options *images.PushOpt
 
 		select {
 		case <-response.Request.Context().Done():
-			return "", context.Canceled
+			break
 		default:
 			// non-blocking select
 		}

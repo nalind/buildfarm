@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -362,13 +359,7 @@ func removeNode(ctx context.Context, node *containerNode, pod *Pod, force bool, 
 	}
 
 	if !ctrErrored {
-		opts := ctrRmOpts{
-			Force:     force,
-			RemovePod: true,
-			Timeout:   timeout,
-		}
-
-		if _, _, err := node.container.runtime.removeContainer(ctx, node.container, opts); err != nil {
+		if err := node.container.runtime.removeContainer(ctx, node.container, force, false, true, false, timeout); err != nil {
 			ctrErrored = true
 			ctrErrors[node.id] = err
 		}

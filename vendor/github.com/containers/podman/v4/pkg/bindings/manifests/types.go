@@ -1,34 +1,25 @@
 package manifests
 
-// InspectOptions are optional options for inspecting manifests
-//
 //go:generate go run ../generator/generator.go InspectOptions
+// InspectOptions are optional options for inspecting manifests
 type InspectOptions struct {
-	// Authfile - path to an authentication file.
-	Authfile *string
-	// SkipTLSVerify - skip https and certificate validation when
-	// contacting container registries.
-	SkipTLSVerify *bool
 }
 
-// CreateOptions are optional options for creating manifests
-//
 //go:generate go run ../generator/generator.go CreateOptions
+// CreateOptions are optional options for creating manifests
 type CreateOptions struct {
 	All   *bool
 	Amend *bool
 }
 
+//go:generate go run ../generator/generator.go ExistsOptions
 // ExistsOptions are optional options for checking
 // if a manifest list exists
-//
-//go:generate go run ../generator/generator.go ExistsOptions
 type ExistsOptions struct {
 }
 
-// AddOptions are optional options for adding manifest lists
-//
 //go:generate go run ../generator/generator.go AddOptions
+// AddOptions are optional options for adding manifest lists
 type AddOptions struct {
 	All           *bool
 	Annotation    map[string]string
@@ -44,15 +35,13 @@ type AddOptions struct {
 	SkipTLSVerify *bool `schema:"-"`
 }
 
-// RemoveOptions are optional options for removing manifest lists
-//
 //go:generate go run ../generator/generator.go RemoveOptions
+// RemoveOptions are optional options for removing manifest lists
 type RemoveOptions struct {
 }
 
-// ModifyOptions are optional options for modifying manifest lists
-//
 //go:generate go run ../generator/generator.go ModifyOptions
+// ModifyOptions are optional options for modifying manifest lists
 type ModifyOptions struct {
 	// Operation values are "update", "remove" and "annotate". This allows the service to
 	//   efficiently perform each update on a manifest list.

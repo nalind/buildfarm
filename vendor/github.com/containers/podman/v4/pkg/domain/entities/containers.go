@@ -49,25 +49,15 @@ type ContainerRunlabelOptions struct {
 // ContainerRunlabelReport contains the results from executing container-runlabel.
 type ContainerRunlabelReport struct{}
 
-// WaitOptions are arguments for waiting for a container.
 type WaitOptions struct {
-	// Conditions to wait on.  Includes container statuses such as
-	// "running" or "stopped" and health-related values such "healthy".
-	Conditions []string
-	// Time interval to wait before polling for completion.
-	Interval time.Duration
-	// Ignore errors when a specified container is missing and mark its
-	// return code as -1.
-	Ignore bool
-	// Use the latest created container.
-	Latest bool
+	Condition []define.ContainerStatus
+	Interval  time.Duration
+	Latest    bool
 }
 
-// WaitReport is the result of waiting a container.
 type WaitReport struct {
-	// Error while waiting.
-	Error error
-	// ExitCode of the container.
+	Id       string //nolint:revive,stylecheck
+	Error    error
 	ExitCode int32
 }
 
@@ -191,7 +181,7 @@ type CommitReport struct {
 }
 
 type ContainerExportOptions struct {
-	Output io.Writer
+	Output string
 }
 
 type CheckpointOptions struct {
@@ -214,7 +204,7 @@ type CheckpointOptions struct {
 type CheckpointReport struct {
 	Err             error                                   `json:"-"`
 	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
-	RawInput        string                                  `json:"-"`
+	RawInput        string                                  `json:"RawInput"`
 	RuntimeDuration int64                                   `json:"runtime_checkpoint_duration"`
 	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
@@ -241,7 +231,7 @@ type RestoreOptions struct {
 type RestoreReport struct {
 	Err             error                                   `json:"-"`
 	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
-	RawInput        string                                  `json:"-"`
+	RawInput        string                                  `json:"RawInput"`
 	RuntimeDuration int64                                   `json:"runtime_restore_duration"`
 	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
@@ -472,8 +462,6 @@ type ContainerCpOptions struct {
 // ContainerStatsOptions describes input options for getting
 // stats on containers
 type ContainerStatsOptions struct {
-	// Get all containers stats
-	All bool
 	// Operate on the latest known container.  Only supported for local
 	// clients.
 	Latest bool

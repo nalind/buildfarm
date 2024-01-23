@@ -228,7 +228,6 @@ type InspectContainerState struct {
 	CheckpointPath string             `json:"CheckpointPath,omitempty"`
 	RestoreLog     string             `json:"RestoreLog,omitempty"`
 	Restored       bool               `json:"Restored,omitempty"`
-	StoppedByUser  bool               `json:"StoppedByUser,omitempty"`
 }
 
 // Healthcheck returns the HealthCheckResults. This is used for old podman compat
@@ -239,7 +238,7 @@ func (s *InspectContainerState) Healthcheck() HealthCheckResults {
 
 // HealthCheckResults describes the results/logs from a healthcheck
 type HealthCheckResults struct {
-	// Status starting, healthy or unhealthy
+	// Status healthy or unhealthy
 	Status string `json:"Status"`
 	// FailingStreak is the number of consecutive failed healthchecks
 	FailingStreak int `json:"FailingStreak"`
@@ -266,7 +265,6 @@ type HealthCheckLog struct {
 // as possible from the spec and container config.
 // Some things cannot be inferred. These will be populated by spec annotations
 // (if available).
-//
 //nolint:revive,stylecheck // Field names are fixed for compatibility and cannot be changed.
 type InspectContainerHostConfig struct {
 	// Binds contains an array of user-added mounts.
@@ -342,7 +340,7 @@ type InspectContainerHostConfig struct {
 	// DnsSearch is a list of DNS search domains that will be set in the
 	// container's resolv.conf
 	DnsSearch []string `json:"DnsSearch"`
-	// ExtraHosts contains hosts that will be added to the container's
+	// ExtraHosts contains hosts that will be aded to the container's
 	// /etc/hosts.
 	ExtraHosts []string `json:"ExtraHosts"`
 	// GroupAdd contains groups that the user inside the container will be
@@ -567,9 +565,6 @@ type InspectContainerHostConfig struct {
 	IOMaximumBandwidth uint64 `json:"IOMaximumBandwidth"`
 	// CgroupConf is the configuration for cgroup v2.
 	CgroupConf map[string]string `json:"CgroupConf"`
-	// IntelRdtClosID defines the Intel RDT CAT Class Of Service (COS) that
-	// all processes of the container should run in.
-	IntelRdtClosID string `json:"IntelRdtClosID,omitempty"`
 }
 
 // Address represents an IP address.
@@ -610,7 +605,7 @@ type InspectBasicNetworkConfig struct {
 	AdditionalMacAddresses []string `json:"AdditionalMACAddresses,omitempty"`
 }
 
-// InspectAdditionalNetwork holds information about non-default networks the
+// InspectAdditionalNetwork holds information about non-default CNI networks the
 // container has been connected to.
 // As with InspectNetworkSettings, many fields are unused and maintained only
 // for compatibility with Docker.
@@ -646,7 +641,7 @@ type InspectNetworkSettings struct {
 	LinkLocalIPv6PrefixLen int                          `json:"LinkLocalIPv6PrefixLen"`
 	Ports                  map[string][]InspectHostPort `json:"Ports"`
 	SandboxKey             string                       `json:"SandboxKey"`
-	// Networks contains information on non-default networks this
+	// Networks contains information on non-default CNI networks this
 	// container has joined.
 	// It is a map of network name to network information.
 	Networks map[string]*InspectAdditionalNetwork `json:"Networks,omitempty"`
@@ -658,46 +653,43 @@ type InspectNetworkSettings struct {
 // compatible with `docker inspect` JSON, but additional fields have been added
 // as required to share information not in the original output.
 type InspectContainerData struct {
-	ID                      string                      `json:"Id"`
-	Created                 time.Time                   `json:"Created"`
-	Path                    string                      `json:"Path"`
-	Args                    []string                    `json:"Args"`
-	State                   *InspectContainerState      `json:"State"`
-	Image                   string                      `json:"Image"`
-	ImageDigest             string                      `json:"ImageDigest"`
-	ImageName               string                      `json:"ImageName"`
-	Rootfs                  string                      `json:"Rootfs"`
-	Pod                     string                      `json:"Pod"`
-	ResolvConfPath          string                      `json:"ResolvConfPath"`
-	HostnamePath            string                      `json:"HostnamePath"`
-	HostsPath               string                      `json:"HostsPath"`
-	StaticDir               string                      `json:"StaticDir"`
-	OCIConfigPath           string                      `json:"OCIConfigPath,omitempty"`
-	OCIRuntime              string                      `json:"OCIRuntime,omitempty"`
-	ConmonPidFile           string                      `json:"ConmonPidFile"`
-	PidFile                 string                      `json:"PidFile"`
-	Name                    string                      `json:"Name"`
-	RestartCount            int32                       `json:"RestartCount"`
-	Driver                  string                      `json:"Driver"`
-	MountLabel              string                      `json:"MountLabel"`
-	ProcessLabel            string                      `json:"ProcessLabel"`
-	AppArmorProfile         string                      `json:"AppArmorProfile"`
-	EffectiveCaps           []string                    `json:"EffectiveCaps"`
-	BoundingCaps            []string                    `json:"BoundingCaps"`
-	ExecIDs                 []string                    `json:"ExecIDs"`
-	GraphDriver             *DriverData                 `json:"GraphDriver"`
-	SizeRw                  *int64                      `json:"SizeRw,omitempty"`
-	SizeRootFs              int64                       `json:"SizeRootFs,omitempty"`
-	Mounts                  []InspectMount              `json:"Mounts"`
-	Dependencies            []string                    `json:"Dependencies"`
-	NetworkSettings         *InspectNetworkSettings     `json:"NetworkSettings"`
-	Namespace               string                      `json:"Namespace"`
-	IsInfra                 bool                        `json:"IsInfra"`
-	IsService               bool                        `json:"IsService"`
-	KubeExitCodePropagation string                      `json:"KubeExitCodePropagation"`
-	LockNumber              uint32                      `json:"lockNumber"`
-	Config                  *InspectContainerConfig     `json:"Config"`
-	HostConfig              *InspectContainerHostConfig `json:"HostConfig"`
+	ID              string                      `json:"Id"`
+	Created         time.Time                   `json:"Created"`
+	Path            string                      `json:"Path"`
+	Args            []string                    `json:"Args"`
+	State           *InspectContainerState      `json:"State"`
+	Image           string                      `json:"Image"`
+	ImageName       string                      `json:"ImageName"`
+	Rootfs          string                      `json:"Rootfs"`
+	Pod             string                      `json:"Pod"`
+	ResolvConfPath  string                      `json:"ResolvConfPath"`
+	HostnamePath    string                      `json:"HostnamePath"`
+	HostsPath       string                      `json:"HostsPath"`
+	StaticDir       string                      `json:"StaticDir"`
+	OCIConfigPath   string                      `json:"OCIConfigPath,omitempty"`
+	OCIRuntime      string                      `json:"OCIRuntime,omitempty"`
+	ConmonPidFile   string                      `json:"ConmonPidFile"`
+	PidFile         string                      `json:"PidFile"`
+	Name            string                      `json:"Name"`
+	RestartCount    int32                       `json:"RestartCount"`
+	Driver          string                      `json:"Driver"`
+	MountLabel      string                      `json:"MountLabel"`
+	ProcessLabel    string                      `json:"ProcessLabel"`
+	AppArmorProfile string                      `json:"AppArmorProfile"`
+	EffectiveCaps   []string                    `json:"EffectiveCaps"`
+	BoundingCaps    []string                    `json:"BoundingCaps"`
+	ExecIDs         []string                    `json:"ExecIDs"`
+	GraphDriver     *DriverData                 `json:"GraphDriver"`
+	SizeRw          *int64                      `json:"SizeRw,omitempty"`
+	SizeRootFs      int64                       `json:"SizeRootFs,omitempty"`
+	Mounts          []InspectMount              `json:"Mounts"`
+	Dependencies    []string                    `json:"Dependencies"`
+	NetworkSettings *InspectNetworkSettings     `json:"NetworkSettings"`
+	Namespace       string                      `json:"Namespace"`
+	IsInfra         bool                        `json:"IsInfra"`
+	IsService       bool                        `json:"IsService"`
+	Config          *InspectContainerConfig     `json:"Config"`
+	HostConfig      *InspectContainerHostConfig `json:"HostConfig"`
 }
 
 // InspectExecSession contains information about a given exec session.

@@ -1,5 +1,5 @@
-//go:build !remote
-// +build !remote
+//go:build freebsd
+// +build freebsd
 
 package libpod
 
@@ -75,7 +75,7 @@ type LinkStatistics64 struct {
 
 type RootlessNetNS struct {
 	dir  string
-	Lock *lockfile.LockFile
+	Lock lockfile.Locker
 }
 
 // getPath will join the given path to the rootless netns dir
@@ -85,7 +85,7 @@ func (r *RootlessNetNS) getPath(path string) string {
 
 // Do - run the given function in the rootless netns.
 // It does not lock the rootlessCNI lock, the caller
-// should only lock when needed, e.g. for network operations.
+// should only lock when needed, e.g. for cni operations.
 func (r *RootlessNetNS) Do(toRun func() error) error {
 	return errors.New("not supported on freebsd")
 }
@@ -98,14 +98,14 @@ func (r *RootlessNetNS) Cleanup(runtime *Runtime) error {
 }
 
 // GetRootlessNetNs returns the rootless netns object. If create is set to true
-// the rootless network namespace will be created if it does not already exist.
+// the rootless network namespace will be created if it does not exists already.
 // If called as root it returns always nil.
 // On success the returned RootlessCNI lock is locked and must be unlocked by the caller.
 func (r *Runtime) GetRootlessNetNs(new bool) (*RootlessNetNS, error) {
 	return nil, nil
 }
 
-func getSlirp4netnsIP(subnet *net.IPNet) (*net.IP, error) {
+func GetSlirp4netnsIP(subnet *net.IPNet) (*net.IP, error) {
 	return nil, errors.New("not implemented GetSlirp4netnsIP")
 }
 
@@ -116,7 +116,7 @@ func (r *Runtime) setupNetNS(ctr *Container) error {
 }
 
 // Create and configure a new network namespace for a container
-func (r *Runtime) configureNetNS(ctr *Container, ctrNS string) (status map[string]types.StatusBlock, rerr error) {
+func (r *Runtime) configureNetNS(ctr *Container, ctrNS *jailNetNS) (status map[string]types.StatusBlock, rerr error) {
 	if err := r.exposeMachinePorts(ctr.config.PortMappings); err != nil {
 		return nil, err
 	}
@@ -139,7 +139,7 @@ func (r *Runtime) configureNetNS(ctr *Container, ctrNS string) (status map[strin
 	}
 
 	netOpts := ctr.getNetworkOptions(networks)
-	netStatus, err := r.setUpNetwork(ctrNS, netOpts)
+	netStatus, err := r.setUpNetwork(ctrNS.Name, netOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -148,16 +148,16 @@ func (r *Runtime) configureNetNS(ctr *Container, ctrNS string) (status map[strin
 }
 
 // Create and configure a new network namespace for a container
-func (r *Runtime) createNetNS(ctr *Container) (n string, q map[string]types.StatusBlock, retErr error) {
+func (r *Runtime) createNetNS(ctr *Container) (n *jailNetNS, q map[string]types.StatusBlock, retErr error) {
 	b := make([]byte, 16)
 	_, err := rand.Reader.Read(b)
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to generate random vnet name: %v", err)
+		return nil, nil, fmt.Errorf("failed to generate random vnet name: %v", err)
 	}
-	netns := fmt.Sprintf("vnet-%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	ctrNS := &jailNetNS{Name: fmt.Sprintf("vnet-%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])}
 
 	jconf := jail.NewConfig()
-	jconf.Set("name", netns)
+	jconf.Set("name", ctrNS.Name)
 	jconf.Set("vnet", jail.NEW)
 	jconf.Set("children.max", 1)
 	jconf.Set("persist", true)
@@ -166,24 +166,15 @@ func (r *Runtime) createNetNS(ctr *Container) (n string, q map[string]types.Stat
 	jconf.Set("allow.raw_sockets", true)
 	jconf.Set("allow.chflags", true)
 	jconf.Set("securelevel", -1)
-	j, err := jail.Create(jconf)
-	if err != nil {
-		return "", nil, fmt.Errorf("Failed to create vnet jail %s for container %s: %w", netns, ctr.ID(), err)
+	if _, err := jail.Create(jconf); err != nil {
+		logrus.Debugf("Failed to create vnet jail %s for container %s", ctrNS.Name, ctr.ID())
 	}
 
-	logrus.Debugf("Created vnet jail %s for container %s", netns, ctr.ID())
+	logrus.Debugf("Created vnet jail %s for container %s", ctrNS.Name, ctr.ID())
 
 	var networkStatus map[string]types.StatusBlock
-	networkStatus, err = r.configureNetNS(ctr, netns)
-	if err != nil {
-		jconf := jail.NewConfig()
-		jconf.Set("persist", false)
-		if err := j.Set(jconf); err != nil {
-			// Log this error and return the error from configureNetNS
-			logrus.Errorf("failed to destroy vnet jail %s: %w", netns, err)
-		}
-	}
-	return netns, networkStatus, err
+	networkStatus, err = r.configureNetNS(ctr, ctrNS)
+	return ctrNS, networkStatus, err
 }
 
 // Tear down a network namespace, undoing all state associated with it.
@@ -192,41 +183,40 @@ func (r *Runtime) teardownNetNS(ctr *Container) error {
 		// do not return an error otherwise we would prevent network cleanup
 		logrus.Errorf("failed to free gvproxy machine ports: %v", err)
 	}
-	if err := r.teardownNetwork(ctr); err != nil {
+	if err := r.teardownCNI(ctr); err != nil {
 		return err
 	}
 
-	if ctr.state.NetNS != "" {
+	if ctr.state.NetNS != nil {
 		// Rather than destroying the jail immediately, reset the
 		// persist flag so that it will live until the container is
 		// done.
-		netjail, err := jail.FindByName(ctr.state.NetNS)
+		netjail, err := jail.FindByName(ctr.state.NetNS.Name)
 		if err != nil {
-			return fmt.Errorf("finding network jail %s: %w", ctr.state.NetNS, err)
+			return fmt.Errorf("finding network jail %s: %w", ctr.state.NetNS.Name, err)
 		}
 		jconf := jail.NewConfig()
 		jconf.Set("persist", false)
 		if err := netjail.Set(jconf); err != nil {
-			return fmt.Errorf("releasing network jail %s: %w", ctr.state.NetNS, err)
+			return fmt.Errorf("releasing network jail %s: %w", ctr.state.NetNS.Name, err)
 		}
 
-		ctr.state.NetNS = ""
+		ctr.state.NetNS = nil
 	}
 
 	return nil
 }
 
-// TODO (5.0): return the statistics per network interface
-// This would allow better compat with docker.
 func getContainerNetIO(ctr *Container) (*LinkStatistics64, error) {
-	if ctr.state.NetNS == "" {
+	if ctr.state.NetNS == nil {
 		// If NetNS is nil, it was set as none, and no netNS
 		// was set up this is a valid state and thus return no
 		// error, nor any statistics
 		return nil, nil
 	}
 
-	cmd := exec.Command("jexec", ctr.state.NetNS, "netstat", "-bi", "--libxo", "json")
+	// FIXME get the interface from the container netstatus
+	cmd := exec.Command("jexec", ctr.state.NetNS.Name, "netstat", "-bI", "eth0", "--libxo", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -236,33 +226,31 @@ func getContainerNetIO(ctr *Container) (*LinkStatistics64, error) {
 		return nil, err
 	}
 
-	// Sum all the interface stats - in practice only Tx/TxBytes are needed
-	res := &LinkStatistics64{}
+	// Find the link stats
 	for _, ifaddr := range stats.Statistics.Interface {
-		// Each interface has two records, one for link-layer which has
-		// an MTU field and one for IP which doesn't. We only want the
-		// link-layer stats.
-		//
-		// It's not clear if we should include loopback stats here but
-		// if we move to per-interface stats in future, this can be
-		// reported separately.
 		if ifaddr.Mtu > 0 {
-			res.RxPackets += ifaddr.ReceivedPackets
-			res.TxPackets += ifaddr.SentPackets
-			res.RxBytes += ifaddr.ReceivedBytes
-			res.TxBytes += ifaddr.SentBytes
-			res.RxErrors += ifaddr.ReceivedErrors
-			res.TxErrors += ifaddr.SentErrors
-			res.RxDropped += ifaddr.DroppedPackets
-			res.Collisions += ifaddr.Collisions
+			return &LinkStatistics64{
+				RxPackets:  ifaddr.ReceivedPackets,
+				TxPackets:  ifaddr.SentPackets,
+				RxBytes:    ifaddr.ReceivedBytes,
+				TxBytes:    ifaddr.SentBytes,
+				RxErrors:   ifaddr.ReceivedErrors,
+				TxErrors:   ifaddr.SentErrors,
+				RxDropped:  ifaddr.DroppedPackets,
+				Collisions: ifaddr.Collisions,
+			}, nil
 		}
 	}
 
-	return res, nil
+	return &LinkStatistics64{}, nil
 }
 
-func (c *Container) joinedNetworkNSPath() (string, bool) {
-	return c.state.NetNS, false
+func (c *Container) joinedNetworkNSPath() string {
+	if c.state.NetNS != nil {
+		return c.state.NetNS.Name
+	} else {
+		return ""
+	}
 }
 
 func (c *Container) inspectJoinedNetworkNS(networkns string) (q types.StatusBlock, retErr error) {
@@ -277,8 +265,4 @@ func (c *Container) reloadRootlessRLKPortMapping() error {
 
 func (c *Container) setupRootlessNetwork() error {
 	return nil
-}
-
-func getPastaIP(state *ContainerState) (net.IP, error) {
-	return nil, fmt.Errorf("pasta networking is Linux only")
 }

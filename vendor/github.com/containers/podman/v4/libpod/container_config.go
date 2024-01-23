@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -27,7 +24,7 @@ type ContainerConfig struct {
 	// in when the container is created, but it is not the final spec used
 	// to run the container - it will be modified by Libpod to add things we
 	// manage (e.g. bind mounts for /etc/resolv.conf, named volumes, a
-	// network namespace prepared by the network backend) in the
+	// network namespace prepared by CNI or slirp4netns) in the
 	// generateSpec() function.
 	Spec *spec.Spec `json:"spec"`
 
@@ -119,8 +116,6 @@ type ContainerRootFSConfig struct {
 	Rootfs string `json:"rootfs,omitempty"`
 	// RootfsOverlay tells if rootfs has to be mounted as an overlay
 	RootfsOverlay bool `json:"rootfs_overlay,omitempty"`
-	// RootfsMapping specifies if there are mappings to apply to the rootfs.
-	RootfsMapping *string `json:"rootfs_mapping,omitempty"`
 	// ShmDir is the path to be mounted on /dev/shm in container.
 	// If not set manually at creation time, Libpod will create a tmpfs
 	// with the size specified in ShmSize and populate this with the path of
@@ -133,8 +128,6 @@ type ContainerRootFSConfig struct {
 	// ShmSize is the size of the container's SHM. Only used if ShmDir was
 	// not set manually at time of creation.
 	ShmSize int64 `json:"shmSize"`
-	// ShmSizeSystemd is the size of systemd-specific tmpfs mounts
-	ShmSizeSystemd int64 `json:"shmSizeSystemd"`
 	// Static directory for container content that will persist across
 	// reboot.
 	// StaticDir is a persistent directory for Libpod files that will
@@ -222,8 +215,6 @@ type ContainerSecurityConfig struct {
 	// Libpod - mostly used in rootless containers where the user running
 	// Libpod wants to retain their UID inside the container.
 	AddCurrentUserPasswdEntry bool `json:"addCurrentUserPasswdEntry,omitempty"`
-	// LabelNested, allow labeling separation from within a container
-	LabelNested bool `json:"label_nested"`
 }
 
 // ContainerNameSpaceConfig is an embedded sub-config providing
@@ -361,10 +352,6 @@ type ContainerMiscConfig struct {
 	CgroupsMode string `json:"cgroupsMode,omitempty"`
 	// Cgroup parent of the container.
 	CgroupParent string `json:"cgroupParent"`
-	// GroupEntry specifies arbitrary data to append to a file.
-	GroupEntry string `json:"group_entry,omitempty"`
-	// KubeExitCodePropagation of the service container.
-	KubeExitCodePropagation define.KubeExitCodePropagation `json:"kubeExitCodePropagation"`
 	// LogPath log location
 	LogPath string `json:"logPath"`
 	// LogTag is the tag used for logging
@@ -378,7 +365,7 @@ type ContainerMiscConfig struct {
 	// RestartPolicy indicates what action the container will take upon
 	// exiting naturally.
 	// Allowed options are "no" (take no action), "on-failure" (restart on
-	// non-zero exit code, up to a maximum of RestartRetries times),
+	// non-zero exit code, up an a maximum of RestartRetries times),
 	// and "always" (always restart the container on any exit code).
 	// The empty string is treated as the default ("no")
 	RestartPolicy string `json:"restart_policy,omitempty"`
@@ -408,10 +395,6 @@ type ContainerMiscConfig struct {
 	HealthCheckConfig *manifest.Schema2HealthConfig `json:"healthcheck"`
 	// HealthCheckOnFailureAction defines an action to take once the container turns unhealthy.
 	HealthCheckOnFailureAction define.HealthCheckOnFailureAction `json:"healthcheck_on_failure_action"`
-	// StartupHealthCheckConfig is the configuration of the startup
-	// healthcheck for the container. This will run before the regular HC
-	// runs, and when it passes the regular HC will be activated.
-	StartupHealthCheckConfig *define.StartupHealthCheck `json:"startupHealthCheck,omitempty"`
 	// PreserveFDs is a number of additional file descriptors (in addition
 	// to 0, 1, 2) that will be passed to the executed process. The total FDs
 	// passed will be 3 + PreserveFDs.
@@ -437,8 +420,6 @@ type ContainerMiscConfig struct {
 	// MountAllDevices is an option to indicate whether a privileged container
 	// will mount all the host's devices
 	MountAllDevices bool `json:"mountAllDevices"`
-	// ReadWriteTmpfs indicates whether all tmpfs should be mounted readonly when in ReadOnly mode
-	ReadWriteTmpfs bool `json:"readWriteTmpfs"`
 }
 
 // InfraInherit contains the compatible options inheritable from the infra container
@@ -456,7 +437,6 @@ type InfraInherit struct {
 	SelinuxOpts        []string                 `json:"selinux_opts,omitempty"`
 	Volumes            []*specgen.NamedVolume   `json:"volumes,omitempty"`
 	ShmSize            *int64                   `json:"shm_size"`
-	ShmSizeSystemd     *int64                   `json:"shm_size_systemd"`
 }
 
 // IsDefaultShmSize determines if the user actually set the shm in the parent ctr or if it has been set to the default size

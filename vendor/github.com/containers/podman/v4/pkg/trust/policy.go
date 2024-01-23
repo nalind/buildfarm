@@ -7,15 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/storage/pkg/homedir"
 	"github.com/sirupsen/logrus"
 )
 
@@ -56,22 +53,14 @@ type genericRepoMap map[string]json.RawMessage
 
 // DefaultPolicyPath returns a path to the default policy of the system.
 func DefaultPolicyPath(sys *types.SystemContext) string {
-	if sys != nil && sys.SignaturePolicyPath != "" {
-		return sys.SignaturePolicyPath
-	}
-
-	userPolicyFilePath := filepath.Join(homedir.Get(), filepath.FromSlash(".config/containers/policy.json"))
-	_, err := os.Stat(userPolicyFilePath)
-	if err == nil {
-		return userPolicyFilePath
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
-		logrus.Warnf("Error trying to read local config file: %s", err.Error())
-	}
-
-	systemDefaultPolicyPath := config.DefaultSignaturePolicyPath
-	if sys != nil && sys.RootForImplicitAbsolutePaths != "" {
-		return filepath.Join(sys.RootForImplicitAbsolutePaths, systemDefaultPolicyPath)
+	systemDefaultPolicyPath := "/etc/containers/policy.json"
+	if sys != nil {
+		if sys.SignaturePolicyPath != "" {
+			return sys.SignaturePolicyPath
+		}
+		if sys.RootForImplicitAbsolutePaths != "" {
+			return filepath.Join(sys.RootForImplicitAbsolutePaths, systemDefaultPolicyPath)
+		}
 	}
 	return systemDefaultPolicyPath
 }

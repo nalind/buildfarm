@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -12,7 +9,7 @@ import (
 	"github.com/containers/podman/v4/libpod/driver"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/types"
-	"github.com/docker/go-units"
+	units "github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -132,7 +129,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 			Pid:            runtimeInfo.PID,
 			ConmonPid:      runtimeInfo.ConmonPID,
 			ExitCode:       runtimeInfo.ExitCode,
-			Error:          runtimeInfo.Error,
+			Error:          "", // can't get yet
 			StartedAt:      runtimeInfo.StartedTime,
 			FinishedAt:     runtimeInfo.FinishedTime,
 			Checkpointed:   runtimeInfo.Checkpointed,
@@ -143,44 +140,32 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 			CheckpointPath: runtimeInfo.CheckpointPath,
 			CheckpointLog:  runtimeInfo.CheckpointLog,
 			RestoreLog:     runtimeInfo.RestoreLog,
-			StoppedByUser:  c.state.StoppedByUser,
 		},
-		Image:                   config.RootfsImageID,
-		ImageName:               config.RootfsImageName,
-		Namespace:               config.Namespace,
-		Rootfs:                  config.Rootfs,
-		Pod:                     config.Pod,
-		ResolvConfPath:          resolvPath,
-		HostnamePath:            hostnamePath,
-		HostsPath:               hostsPath,
-		StaticDir:               config.StaticDir,
-		OCIRuntime:              config.OCIRuntime,
-		ConmonPidFile:           config.ConmonPidFile,
-		PidFile:                 config.PidFile,
-		Name:                    config.Name,
-		RestartCount:            int32(runtimeInfo.RestartCount),
-		Driver:                  driverData.Name,
-		MountLabel:              config.MountLabel,
-		ProcessLabel:            config.ProcessLabel,
-		AppArmorProfile:         ctrSpec.Process.ApparmorProfile,
-		ExecIDs:                 execIDs,
-		GraphDriver:             driverData,
-		Mounts:                  inspectMounts,
-		Dependencies:            c.Dependencies(),
-		IsInfra:                 c.IsInfra(),
-		IsService:               c.IsService(),
-		KubeExitCodePropagation: config.KubeExitCodePropagation.String(),
-		LockNumber:              c.lock.ID(),
+		Image:           config.RootfsImageID,
+		ImageName:       config.RootfsImageName,
+		Namespace:       config.Namespace,
+		Rootfs:          config.Rootfs,
+		Pod:             config.Pod,
+		ResolvConfPath:  resolvPath,
+		HostnamePath:    hostnamePath,
+		HostsPath:       hostsPath,
+		StaticDir:       config.StaticDir,
+		OCIRuntime:      config.OCIRuntime,
+		ConmonPidFile:   config.ConmonPidFile,
+		PidFile:         config.PidFile,
+		Name:            config.Name,
+		RestartCount:    int32(runtimeInfo.RestartCount),
+		Driver:          driverData.Name,
+		MountLabel:      config.MountLabel,
+		ProcessLabel:    config.ProcessLabel,
+		AppArmorProfile: ctrSpec.Process.ApparmorProfile,
+		ExecIDs:         execIDs,
+		GraphDriver:     driverData,
+		Mounts:          inspectMounts,
+		Dependencies:    c.Dependencies(),
+		IsInfra:         c.IsInfra(),
+		IsService:       c.IsService(),
 	}
-
-	if config.RootfsImageID != "" { // May not be set if the container was created with --rootfs
-		image, _, err := c.runtime.libimageRuntime.LookupImage(config.RootfsImageID, nil)
-		if err != nil {
-			return nil, err
-		}
-		data.ImageDigest = image.Digest().String()
-	}
-
 	if ctrSpec.Process.Capabilities != nil {
 		data.EffectiveCaps = ctrSpec.Process.Capabilities.Effective
 		data.BoundingCaps = ctrSpec.Process.Capabilities.Bounding
@@ -191,7 +176,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 	}
 
 	if c.config.HealthCheckConfig != nil {
-		// This container has a healthcheck defined in it; we need to add its state
+		// This container has a healthcheck defined in it; we need to add it's state
 		healthCheckState, err := c.getHealthCheckLog()
 		if err != nil {
 			// An error here is not considered fatal; no health state will be displayed
@@ -281,12 +266,12 @@ func (c *Container) GetMounts(namedVolumes []*ContainerNamedVolume, imageVolumes
 	for _, mount := range mounts {
 		// It's a mount.
 		// Is it a tmpfs? If so, discard.
-		if mount.Type == define.TypeTmpfs {
+		if mount.Type == "tmpfs" {
 			continue
 		}
 
 		mountStruct := define.InspectMount{}
-		mountStruct.Type = define.TypeBind
+		mountStruct.Type = "bind"
 		mountStruct.Source = mount.Source
 		mountStruct.Destination = mount.Destination
 
@@ -316,10 +301,6 @@ func (c *Container) GetSecurityOptions() []string {
 	if apparmor, ok := ctrSpec.Annotations[define.InspectAnnotationApparmor]; ok {
 		SecurityOpt = append(SecurityOpt, fmt.Sprintf("apparmor=%s", apparmor))
 	}
-	if c.config.Spec.Linux.MaskedPaths == nil {
-		SecurityOpt = append(SecurityOpt, "unmask=all")
-	}
-
 	return SecurityOpt
 }
 
@@ -515,9 +496,6 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		if ctrSpec.Annotations[define.InspectAnnotationInit] == define.InspectResponseTrue {
 			hostConfig.Init = true
 		}
-		if ctrSpec.Annotations[define.InspectAnnotationPublishAll] == define.InspectResponseTrue {
-			hostConfig.PublishAllPorts = true
-		}
 	}
 
 	if err := c.platformInspectContainerHostConfig(ctrSpec, hostConfig); err != nil {
@@ -545,7 +523,7 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		}
 	}
 	for _, mount := range mounts {
-		if mount.Type == define.TypeTmpfs {
+		if mount.Type == "tmpfs" {
 			tmpfs[mount.Destination] = strings.Join(mount.Options, ",")
 		} else {
 			// TODO - maybe we should parse for empty source/destination
@@ -565,9 +543,9 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 	hostConfig.NetworkMode = networkMode
 
 	// Port bindings.
-	// Only populate if we are creating the network namespace to configure the network.
+	// Only populate if we're using CNI to configure the network.
 	if c.config.CreateNetNS {
-		hostConfig.PortBindings = makeInspectPortBindings(c.config.PortMappings)
+		hostConfig.PortBindings = makeInspectPortBindings(c.config.PortMappings, c.config.ExposedPorts)
 	} else {
 		hostConfig.PortBindings = make(map[string][]define.InspectHostPort)
 	}

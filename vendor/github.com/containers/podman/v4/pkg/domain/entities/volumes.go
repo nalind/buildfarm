@@ -19,8 +19,6 @@ type VolumeCreateOptions struct {
 	Labels map[string]string `schema:"labels"`
 	// Mapping of driver options and values.
 	Options map[string]string `schema:"opts"`
-	// Ignore existing volumes
-	IgnoreIfExists bool `schema:"ignoreIfExist"`
 }
 
 type VolumeConfigResponse struct {
@@ -30,7 +28,6 @@ type VolumeConfigResponse struct {
 type VolumeRmOptions struct {
 	All     bool
 	Force   bool
-	Ignore  bool
 	Timeout *uint
 }
 

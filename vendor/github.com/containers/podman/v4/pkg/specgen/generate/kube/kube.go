@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package kube
 
 import (
@@ -19,31 +16,26 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
 	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/manifest"
-	itypes "github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/libpod/define"
 	ann "github.com/containers/podman/v4/pkg/annotations"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
 	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/api/resource"
-	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/util/intstr"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgen/generate"
 	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
 	"github.com/containers/podman/v4/pkg/util"
-	"github.com/docker/docker/pkg/meminfo"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
-	"sigs.k8s.io/yaml"
 )
 
-func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, publishAllPorts bool, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
+func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
 	p.Net = &entities.NetOptions{NoHosts: p.Net.NoHosts}
 
 	p.Name = podName
@@ -57,24 +49,12 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 	if podYAML.Spec.ShareProcessNamespace != nil && *podYAML.Spec.ShareProcessNamespace {
 		p.Share = append(p.Share, "pid")
 	}
-	if podYAML.Spec.HostPID {
-		p.Pid = "host"
-	}
-	if podYAML.Spec.HostIPC {
-		p.Ipc = "host"
-	}
 	p.Hostname = podYAML.Spec.Hostname
 	if p.Hostname == "" {
 		p.Hostname = podName
 	}
 	if podYAML.Spec.HostNetwork {
 		p.Net.Network = specgen.Namespace{NSMode: "host"}
-		nodeHostName, err := os.Hostname()
-		if err != nil {
-			return p, err
-		}
-		p.Hostname = nodeHostName
-		p.Uts = "host"
 	}
 	if podYAML.Spec.HostAliases != nil {
 		if p.Net.NoHosts {
@@ -88,7 +68,7 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 		}
 		p.Net.AddHosts = hosts
 	}
-	podPorts := getPodPorts(podYAML.Spec.Containers, publishAllPorts)
+	podPorts := getPodPorts(podYAML.Spec.Containers)
 	p.Net.PublishPorts = podPorts
 
 	if dnsConfig := podYAML.Spec.DNSConfig; dnsConfig != nil {
@@ -117,17 +97,6 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 			p.Net.DNSOptions = dnsOptions
 		}
 	}
-
-	if pscConfig := podYAML.Spec.SecurityContext; pscConfig != nil {
-		// Extract sysctl list from pod security context
-		if options := pscConfig.Sysctls; len(options) > 0 {
-			sysctlOptions := make([]string, 0, len(options))
-			for _, opts := range options {
-				sysctlOptions = append(sysctlOptions, opts.Name+"="+opts.Value)
-			}
-			p.Sysctl = sysctlOptions
-		}
-	}
 	return p, nil
 }
 
@@ -138,8 +107,6 @@ type CtrSpecGenOptions struct {
 	Container v1.Container
 	// Image available to use (pulled or found local)
 	Image *libimage.Image
-	// IPCNSIsHost tells the container to use the host ipcns
-	IpcNSIsHost bool
 	// Volumes for all containers
 	Volumes map[string]*KubeVolume
 	// PodID of the parent pod
@@ -152,18 +119,12 @@ type CtrSpecGenOptions struct {
 	ConfigMaps []v1.ConfigMap
 	// SeccompPaths for finding the seccomp profile path
 	SeccompPaths *KubeSeccompPaths
-	// ReadOnly make all containers root file system readonly
-	ReadOnly itypes.OptionalBool
 	// RestartPolicy defines the restart policy of the container
 	RestartPolicy string
 	// NetNSIsHost tells the container to use the host netns
 	NetNSIsHost bool
 	// UserNSIsHost tells the container to use the host userns
 	UserNSIsHost bool
-	// PidNSIsHost tells the container to use the host pidns
-	PidNSIsHost bool
-	// UtsNSIsHost tells the container to use the host utsns
-	UtsNSIsHost bool
 	// SecretManager to access the secrets
 	SecretsManager *secrets.SecretsManager
 	// LogDriver which should be used for the container
@@ -179,31 +140,10 @@ type CtrSpecGenOptions struct {
 	InitContainerType string
 	// PodSecurityContext is the security context specified for the pod
 	PodSecurityContext *v1.PodSecurityContext
-	// TerminationGracePeriodSeconds is the grace period given to a container to stop before being forcefully killed
-	TerminationGracePeriodSeconds *int64
 }
 
 func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGenerator, error) {
 	s := specgen.NewSpecGenerator(opts.Container.Image, false)
-
-	rtc, err := config.Default()
-	if err != nil {
-		return nil, err
-	}
-
-	if s.Umask == "" {
-		s.Umask = rtc.Umask()
-	}
-
-	if s.CgroupsMode == "" {
-		s.CgroupsMode = rtc.Cgroups()
-	}
-	if len(s.ImageVolumeMode) == 0 {
-		s.ImageVolumeMode = rtc.Engine.ImageVolumeMode
-	}
-	if s.ImageVolumeMode == define.TypeBind {
-		s.ImageVolumeMode = "anonymous"
-	}
 
 	// pod name should be non-empty for Deployment objects to be able to create
 	// multiple pods having containers with unique names
@@ -256,13 +196,9 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	s.InitContainerType = opts.InitContainerType
 
 	setupSecurityContext(s, opts.Container.SecurityContext, opts.PodSecurityContext)
-	err = setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
+	err := setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure livenessProbe: %w", err)
-	}
-	err = setupStartupProbe(s, opts.Container, opts.RestartPolicy)
-	if err != nil {
-		return nil, fmt.Errorf("failed to configure startupProbe: %w", err)
 	}
 
 	// Since we prefix the container name with pod name to work-around the uniqueness requirement,
@@ -300,18 +236,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 
 	if memoryRes > 0 {
 		s.ResourceLimits.Memory.Reservation = &memoryRes
-	}
-
-	ulimitVal, ok := opts.Annotations[define.UlimitAnnotation]
-	if ok {
-		ulimits := strings.Split(ulimitVal, ",")
-		for _, ul := range ulimits {
-			parsed, err := units.ParseUlimit(ul)
-			if err != nil {
-				return nil, err
-			}
-			s.Rlimits = append(s.Rlimits, spec.POSIXRlimit{Type: parsed.Name, Soft: uint64(parsed.Soft), Hard: uint64(parsed.Hard)})
-		}
 	}
 
 	// TODO: We don't understand why specgen does not take of this, but
@@ -375,61 +299,9 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 	if opts.PodInfraID != "" {
 		annotations[ann.SandboxID] = opts.PodInfraID
+		annotations[ann.ContainerType] = ann.ContainerTypeContainer
 	}
 	s.Annotations = annotations
-
-	if containerCIDFile, ok := opts.Annotations[define.InspectAnnotationCIDFile+"/"+opts.Container.Name]; ok {
-		s.Annotations[define.InspectAnnotationCIDFile] = containerCIDFile
-	}
-
-	if seccomp, ok := opts.Annotations[define.InspectAnnotationSeccomp+"/"+opts.Container.Name]; ok {
-		s.Annotations[define.InspectAnnotationSeccomp] = seccomp
-	}
-
-	if apparmor, ok := opts.Annotations[define.InspectAnnotationApparmor+"/"+opts.Container.Name]; ok {
-		s.Annotations[define.InspectAnnotationApparmor] = apparmor
-	}
-
-	if label, ok := opts.Annotations[define.InspectAnnotationLabel+"/"+opts.Container.Name]; ok {
-		if label == "nested" {
-			s.ContainerSecurityConfig.LabelNested = true
-		}
-		if !slices.Contains(s.ContainerSecurityConfig.SelinuxOpts, label) {
-			s.ContainerSecurityConfig.SelinuxOpts = append(s.ContainerSecurityConfig.SelinuxOpts, label)
-		}
-		s.Annotations[define.InspectAnnotationLabel] = strings.Join(s.ContainerSecurityConfig.SelinuxOpts, ",label=")
-	}
-
-	if autoremove, ok := opts.Annotations[define.InspectAnnotationAutoremove+"/"+opts.Container.Name]; ok {
-		autoremoveAsBool, err := strconv.ParseBool(autoremove)
-		if err != nil {
-			return nil, err
-		}
-		s.Remove = autoremoveAsBool
-		s.Annotations[define.InspectAnnotationAutoremove] = autoremove
-	}
-
-	if init, ok := opts.Annotations[define.InspectAnnotationInit+"/"+opts.Container.Name]; ok {
-		initAsBool, err := strconv.ParseBool(init)
-		if err != nil {
-			return nil, err
-		}
-
-		s.Init = initAsBool
-		s.Annotations[define.InspectAnnotationInit] = init
-	}
-
-	if publishAll, ok := opts.Annotations[define.InspectAnnotationPublishAll+"/"+opts.Container.Name]; ok {
-		if opts.IsInfra {
-			publishAllAsBool, err := strconv.ParseBool(publishAll)
-			if err != nil {
-				return nil, err
-			}
-			s.PublishExposedPorts = publishAllAsBool
-		}
-
-		s.Annotations[define.InspectAnnotationPublishAll] = publishAll
-	}
 
 	// Environment Variables
 	envs := map[string]string{}
@@ -494,11 +366,8 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 			mount := spec.Mount{
 				Destination: volume.MountPath,
 				Source:      volumeSource.Source,
-				Type:        define.TypeBind,
+				Type:        "bind",
 				Options:     options,
-			}
-			if len(volume.SubPath) > 0 {
-				mount.Options = append(mount.Options, fmt.Sprintf("subpath=%s", volume.SubPath))
 			}
 			s.Mounts = append(s.Mounts, mount)
 		case KubeVolumeTypeNamed:
@@ -506,7 +375,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
-				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &namedVolume)
 		case KubeVolumeTypeConfigMap:
@@ -514,7 +382,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
-				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &cmVolume)
 		case KubeVolumeTypeCharDevice:
@@ -540,7 +407,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
-				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &secretVolume)
 		case KubeVolumeTypeEmptyDir:
@@ -549,7 +415,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Name:        volumeSource.Source,
 				Options:     options,
 				IsAnonymous: true,
-				SubPath:     volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &emptyDirVolume)
 		default:
@@ -565,15 +430,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	if opts.UserNSIsHost {
 		s.UserNS.NSMode = specgen.Host
 	}
-	if opts.PidNSIsHost {
-		s.PidNS.NSMode = specgen.Host
-	}
-	if opts.IpcNSIsHost {
-		s.IpcNS.NSMode = specgen.Host
-	}
-	if opts.UtsNSIsHost {
-		s.UtsNS.NSMode = specgen.Host
-	}
 
 	// Add labels that come from kube
 	if len(s.Labels) == 0 {
@@ -588,22 +444,10 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		}
 	}
 
-	if ro := opts.ReadOnly; ro != itypes.OptionalBoolUndefined {
-		s.ReadOnlyFilesystem = ro == itypes.OptionalBoolTrue
-	}
-	// This should default to true for kubernetes yaml
-	s.ReadWriteTmpfs = true
-
 	// Make sure the container runs in a systemd unit which is
 	// stored as a label at container creation.
 	if unit := os.Getenv(systemdDefine.EnvVariable); unit != "" {
 		s.Labels[systemdDefine.EnvVariable] = unit
-	}
-
-	// Set the stopTimeout if terminationGracePeriodSeconds is set in the kube yaml
-	if opts.TerminationGracePeriodSeconds != nil {
-		timeout := uint(*opts.TerminationGracePeriodSeconds)
-		s.StopTimeout = &timeout
 	}
 
 	return s, nil
@@ -644,66 +488,6 @@ func parseMountPath(mountPath string, readOnly bool, propagationMode *v1.MountPr
 	return dest, opts, nil
 }
 
-func probeToHealthConfig(probe *v1.Probe, containerPorts []v1.ContainerPort) (*manifest.Schema2HealthConfig, error) {
-	var commandString string
-	failureCmd := "exit 1"
-	probeHandler := probe.Handler
-	host := "localhost" // Kubernetes default is host IP, but with Podman currently we run inside the container
-
-	// configure healthcheck on the basis of Handler Actions.
-	switch {
-	case probeHandler.Exec != nil:
-		// `makeHealthCheck` function can accept a json array as the command.
-		cmd, err := json.Marshal(probeHandler.Exec.Command)
-		if err != nil {
-			return nil, err
-		}
-		commandString = string(cmd)
-	case probeHandler.HTTPGet != nil:
-		// set defaults as in https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#http-probes
-		uriScheme := v1.URISchemeHTTP
-		if probeHandler.HTTPGet.Scheme != "" {
-			uriScheme = probeHandler.HTTPGet.Scheme
-		}
-		if probeHandler.HTTPGet.Host != "" {
-			host = probeHandler.HTTPGet.Host
-		}
-		path := "/"
-		if probeHandler.HTTPGet.Path != "" {
-			path = probeHandler.HTTPGet.Path
-		}
-		portNum, err := getPortNumber(probeHandler.HTTPGet.Port, containerPorts)
-		if err != nil {
-			return nil, err
-		}
-		commandString = fmt.Sprintf("curl -f %s://%s:%d%s || %s", uriScheme, host, portNum, path, failureCmd)
-	case probeHandler.TCPSocket != nil:
-		portNum, err := getPortNumber(probeHandler.TCPSocket.Port, containerPorts)
-		if err != nil {
-			return nil, err
-		}
-		if probeHandler.TCPSocket.Host != "" {
-			host = probeHandler.TCPSocket.Host
-		}
-		commandString = fmt.Sprintf("nc -z -v %s %d || %s", host, portNum, failureCmd)
-	}
-	return makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
-}
-
-func getPortNumber(port intstr.IntOrString, containerPorts []v1.ContainerPort) (int, error) {
-	var portNum int
-	if port.Type == intstr.String && port.IntValue() == 0 {
-		idx := slices.IndexFunc(containerPorts, func(cp v1.ContainerPort) bool { return cp.Name == port.String() })
-		if idx == -1 {
-			return 0, fmt.Errorf("unknown port: %s", port.String())
-		}
-		portNum = int(containerPorts[idx].ContainerPort)
-	} else {
-		portNum = port.IntValue()
-	}
-	return portNum, nil
-}
-
 func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, restartPolicy string) error {
 	var err error
 	if containerYAML.LivenessProbe == nil {
@@ -711,45 +495,31 @@ func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, re
 	}
 	emptyHandler := v1.Handler{}
 	if containerYAML.LivenessProbe.Handler != emptyHandler {
-		s.HealthConfig, err = probeToHealthConfig(containerYAML.LivenessProbe, containerYAML.Ports)
-		if err != nil {
-			return err
-		}
-		// if restart policy is in place, ensure the health check enforces it
-		if restartPolicy == "always" || restartPolicy == "onfailure" {
-			s.HealthCheckOnFailureAction = define.HealthCheckOnFailureActionRestart
-		}
-		return nil
-	}
-	return nil
-}
+		var commandString string
+		failureCmd := "exit 1"
+		probe := containerYAML.LivenessProbe
+		probeHandler := probe.Handler
 
-func setupStartupProbe(s *specgen.SpecGenerator, containerYAML v1.Container, restartPolicy string) error {
-	if containerYAML.StartupProbe == nil {
-		return nil
-	}
-	emptyHandler := v1.Handler{}
-	if containerYAML.StartupProbe.Handler != emptyHandler {
-		healthConfig, err := probeToHealthConfig(containerYAML.StartupProbe, containerYAML.Ports)
-		if err != nil {
-			return err
+		// append `exit 1` to `cmd` so healthcheck can be marked as `unhealthy`.
+		// append `kill 1` to `cmd` if appropriate restart policy is configured.
+		if restartPolicy == "always" || restartPolicy == "onfailure" {
+			// container will be restarted so we can kill init.
+			failureCmd = "kill 1"
 		}
 
-		// currently, StartupProbe still an optional feature, and it requires HealthConfig.
-		if s.HealthConfig == nil {
-			probe := containerYAML.StartupProbe
-			s.HealthConfig, err = makeHealthCheck("exit 0", probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
-			if err != nil {
-				return err
-			}
+		// configure healthcheck on the basis of Handler Actions.
+		switch {
+		case probeHandler.Exec != nil:
+			execString := strings.Join(probeHandler.Exec.Command, " ")
+			commandString = fmt.Sprintf("%s || %s", execString, failureCmd)
+		case probeHandler.HTTPGet != nil:
+			commandString = fmt.Sprintf("curl %s://%s:%d/%s  || %s", probeHandler.HTTPGet.Scheme, probeHandler.HTTPGet.Host, probeHandler.HTTPGet.Port.IntValue(), probeHandler.HTTPGet.Path, failureCmd)
+		case probeHandler.TCPSocket != nil:
+			commandString = fmt.Sprintf("nc -z -v %s %d || %s", probeHandler.TCPSocket.Host, probeHandler.TCPSocket.Port.IntValue(), failureCmd)
 		}
-		s.StartupHealthConfig = &define.StartupHealthCheck{
-			Schema2HealthConfig: *healthConfig,
-			Successes:           int(containerYAML.StartupProbe.SuccessThreshold),
-		}
-		// if restart policy is in place, ensure the health check enforces it
-		if restartPolicy == "always" || restartPolicy == "onfailure" {
-			s.HealthCheckOnFailureAction = define.HealthCheckOnFailureActionRestart
+		s.HealthConfig, err = makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
+		if err != nil {
+			return err
 		}
 		return nil
 	}
@@ -773,8 +543,6 @@ func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32,
 			// ...otherwise pass it to "/bin/sh -c" inside the container
 			cmd = []string{define.HealthConfigTestCmdShell}
 			cmd = append(cmd, strings.Split(inCmd, " ")...)
-		} else {
-			cmd = append([]string{define.HealthConfigTestCmd}, cmd...)
 		}
 	}
 	hc := manifest.Schema2HealthConfig{
@@ -785,7 +553,7 @@ func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32,
 		// kubernetes interval defaults to 10 sec and cannot be less than 1
 		interval = 10
 	}
-	hc.Interval = time.Duration(interval) * time.Second
+	hc.Interval = (time.Duration(interval) * time.Second)
 	if retries < 1 {
 		// kubernetes retries defaults to 3
 		retries = 3
@@ -795,13 +563,13 @@ func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32,
 		// kubernetes timeout defaults to 1
 		timeout = 1
 	}
-	timeoutDuration := time.Duration(timeout) * time.Second
+	timeoutDuration := (time.Duration(timeout) * time.Second)
 	if timeoutDuration < time.Duration(1) {
 		return nil, errors.New("healthcheck-timeout must be at least 1 second")
 	}
 	hc.Timeout = timeoutDuration
 
-	startPeriodDuration := time.Duration(startPeriod) * time.Second
+	startPeriodDuration := (time.Duration(startPeriod) * time.Second)
 	if startPeriodDuration < time.Duration(0) {
 		return nil, errors.New("healthcheck-start-period must be 0 seconds or greater")
 	}
@@ -829,10 +597,6 @@ func setupSecurityContext(s *specgen.SpecGenerator, securityContext *v1.Security
 		s.NoNewPrivileges = !*securityContext.AllowPrivilegeEscalation
 	}
 
-	if securityContext.ProcMount != nil && *securityContext.ProcMount == v1.UnmaskedProcMount {
-		s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, []string{"ALL"}...)
-	}
-
 	seopt := securityContext.SELinuxOptions
 	if seopt == nil {
 		seopt = podSecurityContext.SELinuxOptions
@@ -850,9 +614,6 @@ func setupSecurityContext(s *specgen.SpecGenerator, securityContext *v1.Security
 		if seopt.Level != "" {
 			s.SelinuxOpts = append(s.SelinuxOpts, fmt.Sprintf("level:%s", seopt.Level))
 		}
-		if seopt.FileType != "" {
-			s.SelinuxOpts = append(s.SelinuxOpts, fmt.Sprintf("filetype:%s", seopt.FileType))
-		}
 	}
 	if caps := securityContext.Capabilities; caps != nil {
 		for _, capability := range caps.Add {
@@ -867,7 +628,7 @@ func setupSecurityContext(s *specgen.SpecGenerator, securityContext *v1.Security
 		runAsUser = podSecurityContext.RunAsUser
 	}
 	if runAsUser != nil {
-		s.User = strconv.FormatInt(*runAsUser, 10)
+		s.User = fmt.Sprintf("%d", *runAsUser)
 	}
 
 	runAsGroup := securityContext.RunAsGroup
@@ -881,7 +642,7 @@ func setupSecurityContext(s *specgen.SpecGenerator, securityContext *v1.Security
 		s.User = fmt.Sprintf("%s:%d", s.User, *runAsGroup)
 	}
 	for _, group := range podSecurityContext.SupplementalGroups {
-		s.Groups = append(s.Groups, strconv.FormatInt(group, 10))
+		s.Groups = append(s.Groups, fmt.Sprintf("%d", group))
 	}
 }
 
@@ -897,31 +658,17 @@ func quantityToInt64(quantity *resource.Quantity) (int64, error) {
 	return 0, fmt.Errorf("quantity cannot be represented as int64: %v", quantity)
 }
 
-// read a k8s secret in JSON/YAML format from the secret manager
-// k8s secret is stored as YAML, we have to read data as JSON for backward compatibility
+// read a k8s secret in JSON format from the secret manager
 func k8sSecretFromSecretManager(name string, secretsManager *secrets.SecretsManager) (map[string][]byte, error) {
-	_, inputSecret, err := secretsManager.LookupSecretData(name)
+	_, jsonSecret, err := secretsManager.LookupSecretData(name)
 	if err != nil {
 		return nil, err
 	}
 
 	var secrets map[string][]byte
-	if err := json.Unmarshal(inputSecret, &secrets); err != nil {
-		secrets = make(map[string][]byte)
-		var secret v1.Secret
-		if err := yaml.Unmarshal(inputSecret, &secret); err != nil {
-			return nil, fmt.Errorf("secret %v is not valid JSON/YAML: %v", name, err)
-		}
-
-		for key, val := range secret.Data {
-			secrets[key] = val
-		}
-
-		for key, val := range secret.StringData {
-			secrets[key] = []byte(val)
-		}
+	if err := json.Unmarshal(jsonSecret, &secrets); err != nil {
+		return nil, fmt.Errorf("secret %v is not valid JSON: %v", name, err)
 	}
-
 	return secrets, nil
 }
 
@@ -1122,7 +869,7 @@ func getContainerResources(container v1.Container) (v1.ResourceRequirements, err
 	requests := container.Resources.Requests
 
 	if limits == nil || limits.Memory().IsZero() {
-		mi, err := meminfo.Read()
+		mi, err := system.ReadMemInfo()
 		if err != nil {
 			return result, err
 		}
@@ -1154,15 +901,12 @@ func getContainerResources(container v1.Container) (v1.ResourceRequirements, err
 
 // getPodPorts converts a slice of kube container descriptions to an
 // array of portmapping
-func getPodPorts(containers []v1.Container, publishAll bool) []types.PortMapping {
+func getPodPorts(containers []v1.Container) []types.PortMapping {
 	var infraPorts []types.PortMapping
 	for _, container := range containers {
 		for _, p := range container.Ports {
 			if p.HostPort != 0 && p.ContainerPort == 0 {
 				p.ContainerPort = p.HostPort
-			}
-			if p.HostPort == 0 && p.ContainerPort != 0 && publishAll {
-				p.HostPort = p.ContainerPort
 			}
 			if p.Protocol == "" {
 				p.Protocol = "tcp"

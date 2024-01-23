@@ -3,7 +3,6 @@ package tunnel
 import (
 	"context"
 	"os"
-	"sync"
 	"syscall"
 
 	"github.com/containers/podman/v4/libpod/define"
@@ -14,7 +13,6 @@ import (
 // Image-related runtime using an ssh-tunnel to utilize Podman service
 type ImageEngine struct {
 	ClientCtx context.Context
-	FarmNode
 }
 
 // Container-related runtime using an ssh-tunnel to utilize Podman service
@@ -25,16 +23,6 @@ type ContainerEngine struct {
 // Container-related runtime using an ssh-tunnel to utilize Podman service
 type SystemEngine struct {
 	ClientCtx context.Context
-}
-
-type FarmNode struct {
-	NodeName        string
-	platforms       sync.Once
-	platformsErr    error
-	os              string
-	arch            string
-	variant         string
-	nativePlatforms []string
 }
 
 func remoteProxySignals(ctrID string, killFunc func(string) error) {

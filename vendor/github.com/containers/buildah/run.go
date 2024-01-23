@@ -8,8 +8,8 @@ import (
 	"github.com/containers/buildah/internal"
 	"github.com/containers/buildah/pkg/sshagent"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/storage/pkg/lockfile"
 	"github.com/opencontainers/runtime-spec/specs-go"
+	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -86,9 +86,7 @@ type RunOptions struct {
 	Runtime string
 	// Args adds global arguments for the runtime.
 	Args []string
-	// NoHostname won't create new /etc/hostname file
-	NoHostname bool
-	// NoHosts won't create new /etc/hosts file
+	// NoHosts use the images /etc/hosts file
 	NoHosts bool
 	// NoPivot adds the --no-pivot runtime flag.
 	NoPivot bool
@@ -178,14 +176,12 @@ type runMountArtifacts struct {
 	Agents []*sshagent.AgentServer
 	// SSHAuthSock is the path to the ssh auth sock inside the container
 	SSHAuthSock string
-	// TargetLocks to be unlocked if there are any.
-	TargetLocks []*lockfile.LockFile
+	// LockedTargets to be unlocked if there are any.
+	LockedTargets []string
 }
 
 // RunMountInfo are the available run mounts for this run
 type runMountInfo struct {
-	// WorkDir is the current working directory inside the container.
-	WorkDir string
 	// ContextDir is the root directory for the source location for bind mounts.
 	ContextDir string
 	// Secrets are the available secrets to use in a RUN
@@ -200,8 +196,8 @@ type runMountInfo struct {
 
 // IDMaps are the UIDs, GID, and maps for the run
 type IDMaps struct {
-	uidmap     []specs.LinuxIDMapping
-	gidmap     []specs.LinuxIDMapping
+	uidmap     []spec.LinuxIDMapping
+	gidmap     []spec.LinuxIDMapping
 	rootUID    int
 	rootGID    int
 	processUID int

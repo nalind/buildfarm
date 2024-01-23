@@ -1,12 +1,8 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
-	"errors"
+	"bytes"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -22,6 +18,7 @@ import (
 const (
 	idRegistryName    = "id-registry"
 	nameRegistryName  = "name-registry"
+	nsRegistryName    = "ns-registry"
 	ctrName           = "ctr"
 	allCtrsName       = "all-ctrs"
 	podName           = "pod"
@@ -43,6 +40,7 @@ const (
 	netNSName          = "netns"
 	containersName     = "containers"
 	podIDName          = "pod-id"
+	namespaceName      = "namespace"
 	networksName       = "networks"
 
 	staticDirName   = "static-dir"
@@ -57,6 +55,7 @@ const (
 var (
 	idRegistryBkt      = []byte(idRegistryName)
 	nameRegistryBkt    = []byte(nameRegistryName)
+	nsRegistryBkt      = []byte(nsRegistryName)
 	ctrBkt             = []byte(ctrName)
 	allCtrsBkt         = []byte(allCtrsName)
 	podBkt             = []byte(podName)
@@ -79,6 +78,7 @@ var (
 	netNSKey      = []byte(netNSName)
 	containersBkt = []byte(containersName)
 	podIDKey      = []byte(podIDName)
+	namespaceKey  = []byte(namespaceName)
 
 	staticDirKey   = []byte(staticDirName)
 	tmpDirKey      = []byte(tmpDirName)
@@ -96,7 +96,6 @@ type dbConfigValidation struct {
 	runtimeValue string
 	key          []byte
 	defaultValue string
-	isPath       bool
 }
 
 // Check if the configuration of the database is compatible with the
@@ -115,49 +114,42 @@ func checkRuntimeConfig(db *bolt.DB, rt *Runtime) error {
 			runtime.GOOS,
 			osKey,
 			runtime.GOOS,
-			false,
 		},
 		{
 			"libpod root directory (staticdir)",
 			filepath.Clean(rt.config.Engine.StaticDir),
 			staticDirKey,
 			"",
-			true,
 		},
 		{
 			"libpod temporary files directory (tmpdir)",
 			filepath.Clean(rt.config.Engine.TmpDir),
 			tmpDirKey,
 			"",
-			true,
 		},
 		{
 			"storage temporary directory (runroot)",
 			filepath.Clean(rt.StorageConfig().RunRoot),
 			runRootKey,
 			storeOpts.RunRoot,
-			true,
 		},
 		{
 			"storage graph root directory (graphroot)",
 			filepath.Clean(rt.StorageConfig().GraphRoot),
 			graphRootKey,
 			storeOpts.GraphRoot,
-			true,
 		},
 		{
 			"storage graph driver",
 			rt.StorageConfig().GraphDriverName,
 			graphDriverKey,
 			storeOpts.GraphDriverName,
-			false,
 		},
 		{
 			"volume path",
 			rt.config.Engine.VolumePath,
 			volPathKey,
 			"",
-			true,
 		},
 	}
 
@@ -232,45 +224,22 @@ func readOnlyValidateConfig(bucket *bolt.Bucket, toCheck dbConfigValidation) (bo
 	}
 
 	dbValue := string(keyBytes)
-	ourValue := toCheck.runtimeValue
 
-	// Tolerate symlinks when possible - most relevant for OStree systems
-	// and rootless containers, where we want to put containers in /home,
-	// which is symlinked to /var/home.
-	if toCheck.isPath {
-		if dbValue != "" {
-			// Ignore ENOENT on both, on a fresh system some paths
-			// may not exist this early in Libpod init.
-			dbVal, err := filepath.EvalSymlinks(dbValue)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return false, fmt.Errorf("evaluating symlinks on DB %s path %q: %w", toCheck.name, dbValue, err)
-			}
-			dbValue = dbVal
-		}
-		if ourValue != "" {
-			ourVal, err := filepath.EvalSymlinks(ourValue)
-			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return false, fmt.Errorf("evaluating symlinks on configured %s path %q: %w", toCheck.name, ourValue, err)
-			}
-			ourValue = ourVal
-		}
-	}
-
-	if ourValue != dbValue {
+	if toCheck.runtimeValue != dbValue {
 		// If the runtime value is the empty string and default is not,
 		// check against default.
-		if ourValue == "" && toCheck.defaultValue != "" && dbValue == toCheck.defaultValue {
+		if toCheck.runtimeValue == "" && toCheck.defaultValue != "" && dbValue == toCheck.defaultValue {
 			return true, nil
 		}
 
 		// If the DB value is the empty string, check that the runtime
 		// value is the default.
-		if dbValue == "" && toCheck.defaultValue != "" && ourValue == toCheck.defaultValue {
+		if dbValue == "" && toCheck.defaultValue != "" && toCheck.runtimeValue == toCheck.defaultValue {
 			return true, nil
 		}
 
 		return true, fmt.Errorf("database %s %q does not match our %s %q: %w",
-			toCheck.name, dbValue, toCheck.name, ourValue, define.ErrDBBadConfig)
+			toCheck.name, dbValue, toCheck.name, toCheck.runtimeValue, define.ErrDBBadConfig)
 	}
 
 	return true, nil
@@ -325,6 +294,14 @@ func getNamesBucket(tx *bolt.Tx) (*bolt.Bucket, error) {
 	bkt := tx.Bucket(nameRegistryBkt)
 	if bkt == nil {
 		return nil, fmt.Errorf("name registry bucket not found in DB: %w", define.ErrDBBadConfig)
+	}
+	return bkt, nil
+}
+
+func getNSBucket(tx *bolt.Tx) (*bolt.Bucket, error) {
+	bkt := tx.Bucket(nsRegistryBkt)
+	if bkt == nil {
+		return nil, fmt.Errorf("namespace registry bucket not found in DB: %w", define.ErrDBBadConfig)
 	}
 	return bkt, nil
 }
@@ -423,6 +400,13 @@ func (s *BoltState) getContainerConfigFromDB(id []byte, config *ContainerConfig,
 		return fmt.Errorf("container %s not found in DB: %w", string(id), define.ErrNoSuchCtr)
 	}
 
+	if s.namespaceBytes != nil {
+		ctrNamespaceBytes := ctrBkt.Get(namespaceKey)
+		if !bytes.Equal(s.namespaceBytes, ctrNamespaceBytes) {
+			return fmt.Errorf("cannot retrieve container %s as it is part of namespace %q and we are in namespace %q: %w", string(id), string(ctrNamespaceBytes), s.namespace, define.ErrNSMismatch)
+		}
+	}
+
 	configBytes := ctrBkt.Get(configKey)
 	if configBytes == nil {
 		return fmt.Errorf("container %s missing config key in DB: %w", string(id), define.ErrInternal)
@@ -437,50 +421,16 @@ func (s *BoltState) getContainerConfigFromDB(id []byte, config *ContainerConfig,
 		config.ContainerNetworkConfig.PortMappings = ocicniPortsToNetTypesPorts(config.ContainerNetworkConfig.OldPortMappings)
 		// keep the OldPortMappings in case an user has to downgrade podman
 
-		// indicate that the config was modified and should be written back to the db when possible
+		// indicate the the config was modified and should be written back to the db when possible
 		config.rewrite = true
 	}
 
 	return nil
 }
 
-func (s *BoltState) getContainerStateDB(id []byte, ctr *Container, ctrsBkt *bolt.Bucket) error {
-	newState := new(ContainerState)
-	ctrToUpdate := ctrsBkt.Bucket(id)
-	if ctrToUpdate == nil {
-		ctr.valid = false
-		return fmt.Errorf("container %s does not exist in database: %w", ctr.ID(), define.ErrNoSuchCtr)
-	}
-
-	newStateBytes := ctrToUpdate.Get(stateKey)
-	if newStateBytes == nil {
-		return fmt.Errorf("container %s does not have a state key in DB: %w", ctr.ID(), define.ErrInternal)
-	}
-
-	if err := json.Unmarshal(newStateBytes, newState); err != nil {
-		return fmt.Errorf("unmarshalling container %s state: %w", ctr.ID(), err)
-	}
-
-	// backwards compat, previously we used an extra bucket for the netns so try to get it from there
-	netNSBytes := ctrToUpdate.Get(netNSKey)
-	if netNSBytes != nil && newState.NetNS == "" {
-		newState.NetNS = string(netNSBytes)
-	}
-
-	// New state compiled successfully, swap it into the current state
-	ctr.state = newState
-	return nil
-}
-
-func (s *BoltState) getContainerFromDB(id []byte, ctr *Container, ctrsBkt *bolt.Bucket, loadState bool) error {
+func (s *BoltState) getContainerFromDB(id []byte, ctr *Container, ctrsBkt *bolt.Bucket) error {
 	if err := s.getContainerConfigFromDB(id, ctr.config, ctrsBkt); err != nil {
 		return err
-	}
-
-	if loadState {
-		if err := s.getContainerStateDB(id, ctr, ctrsBkt); err != nil {
-			return err
-		}
 	}
 
 	// Get the lock
@@ -534,6 +484,13 @@ func (s *BoltState) getPodFromDB(id []byte, pod *Pod, podBkt *bolt.Bucket) error
 	podDB := podBkt.Bucket(id)
 	if podDB == nil {
 		return fmt.Errorf("pod with ID %s not found: %w", string(id), define.ErrNoSuchPod)
+	}
+
+	if s.namespaceBytes != nil {
+		podNamespaceBytes := podDB.Get(namespaceKey)
+		if !bytes.Equal(s.namespaceBytes, podNamespaceBytes) {
+			return fmt.Errorf("cannot retrieve pod %s as it is part of namespace %q and we are in namespace %q: %w", string(id), string(podNamespaceBytes), s.namespace, define.ErrNSMismatch)
+		}
 	}
 
 	podConfigBytes := podDB.Get(configKey)
@@ -614,6 +571,11 @@ func (s *BoltState) getVolumeFromDB(name []byte, volume *Volume, volBkt *bolt.Bu
 // Add a container to the DB
 // If pod is not nil, the container is added to the pod as well
 func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
+	if s.namespace != "" && s.namespace != ctr.config.Namespace {
+		return fmt.Errorf("cannot add container %s as it is in namespace %q and we are in namespace %q: %w",
+			ctr.ID(), s.namespace, ctr.config.Namespace, define.ErrNSMismatch)
+	}
+
 	// Set the original networks to nil. We can save some space by not storing it in the config
 	// since we store it in a different mutable bucket anyway.
 	configNetworks := ctr.config.Networks
@@ -628,10 +590,16 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 	if err != nil {
 		return fmt.Errorf("marshalling container %s state to JSON: %w", ctr.ID(), err)
 	}
+	netNSPath := getNetNSPath(ctr)
 	dependsCtrs := ctr.Dependencies()
 
 	ctrID := []byte(ctr.ID())
 	ctrName := []byte(ctr.Name())
+
+	var ctrNamespace []byte
+	if ctr.config.Namespace != "" {
+		ctrNamespace = []byte(ctr.config.Namespace)
+	}
 
 	// make sure to marshal the network options before we get the db lock
 	networks := make(map[string][]byte, len(configNetworks))
@@ -643,6 +611,8 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 		if opts.InterfaceName == "" {
 			return fmt.Errorf("network interface name cannot be an empty string: %w", define.ErrInvalidArg)
 		}
+		// always add the short id as alias for docker compat
+		opts.Aliases = append(opts.Aliases, ctr.config.ID[:12])
 		optBytes, err := json.Marshal(opts)
 		if err != nil {
 			return fmt.Errorf("marshalling network options JSON for container %s: %w", ctr.ID(), err)
@@ -663,6 +633,11 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 		}
 
 		namesBucket, err := getNamesBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		nsBucket, err := getNSBucket(tx)
 		if err != nil {
 			return err
 		}
@@ -702,6 +677,12 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 			if podCtrs == nil {
 				return fmt.Errorf("pod %s does not have a containers bucket: %w", pod.ID(), define.ErrInternal)
 			}
+
+			podNS := podDB.Get(namespaceKey)
+			if !bytes.Equal(podNS, ctrNamespace) {
+				return fmt.Errorf("container %s is in namespace %s and pod %s is in namespace %s: %w",
+					ctr.ID(), ctr.config.Namespace, pod.ID(), pod.config.Namespace, define.ErrNSMismatch)
+			}
 		}
 
 		// Check if we already have a container with the given ID and name
@@ -730,6 +711,11 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 		if err := namesBucket.Put(ctrName, ctrID); err != nil {
 			return fmt.Errorf("adding container %s name (%s) to DB: %w", ctr.ID(), ctr.Name(), err)
 		}
+		if ctrNamespace != nil {
+			if err := nsBucket.Put(ctrID, ctrNamespace); err != nil {
+				return fmt.Errorf("adding container %s namespace (%q) to DB: %w", ctr.ID(), ctr.Namespace(), err)
+			}
+		}
 		if err := allCtrsBucket.Put(ctrID, ctrName); err != nil {
 			return fmt.Errorf("adding container %s to all containers bucket in DB: %w", ctr.ID(), err)
 		}
@@ -745,9 +731,19 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 		if err := newCtrBkt.Put(stateKey, stateJSON); err != nil {
 			return fmt.Errorf("adding container %s state to DB: %w", ctr.ID(), err)
 		}
+		if ctrNamespace != nil {
+			if err := newCtrBkt.Put(namespaceKey, ctrNamespace); err != nil {
+				return fmt.Errorf("adding container %s namespace to DB: %w", ctr.ID(), err)
+			}
+		}
 		if pod != nil {
 			if err := newCtrBkt.Put(podIDKey, []byte(pod.ID())); err != nil {
 				return fmt.Errorf("adding container %s pod to DB: %w", ctr.ID(), err)
+			}
+		}
+		if netNSPath != "" {
+			if err := newCtrBkt.Put(netNSKey, []byte(netNSPath)); err != nil {
+				return fmt.Errorf("adding container %s netns path to DB: %w", ctr.ID(), err)
 			}
 		}
 		if len(networks) > 0 {
@@ -788,6 +784,11 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 			} else if depCtrPod != nil {
 				// If we're not part of a pod, we cannot depend on containers in a pod
 				return fmt.Errorf("container %s depends on container %s which is in a pod - containers not in pods cannot depend on containers in pods: %w", ctr.ID(), dependsCtr, define.ErrInvalidArg)
+			}
+
+			depNamespace := depCtrBkt.Get(namespaceKey)
+			if !bytes.Equal(ctrNamespace, depNamespace) {
+				return fmt.Errorf("container %s in namespace %q depends on container %s in namespace %q - namespaces must match: %w", ctr.ID(), ctr.config.Namespace, dependsCtr, string(depNamespace), define.ErrNSMismatch)
 			}
 
 			depCtrDependsBkt := depCtrBkt.Bucket(dependenciesBkt)
@@ -851,6 +852,11 @@ func (s *BoltState) removeContainer(ctr *Container, pod *Pod, tx *bolt.Tx) error
 		return err
 	}
 
+	nsBucket, err := getNSBucket(tx)
+	if err != nil {
+		return err
+	}
+
 	allCtrsBucket, err := getAllCtrsBucket(tx)
 	if err != nil {
 		return err
@@ -883,6 +889,17 @@ func (s *BoltState) removeContainer(ctr *Container, pod *Pod, tx *bolt.Tx) error
 	if ctrExists == nil {
 		ctr.valid = false
 		return fmt.Errorf("no container with ID %s found in DB: %w", ctr.ID(), define.ErrNoSuchCtr)
+	}
+
+	// Compare namespace
+	// We can't remove containers not in our namespace
+	if s.namespace != "" {
+		if s.namespace != ctr.config.Namespace {
+			return fmt.Errorf("container %s is in namespace %q, does not match our namespace %q: %w", ctr.ID(), ctr.config.Namespace, s.namespace, define.ErrNSMismatch)
+		}
+		if pod != nil && s.namespace != pod.config.Namespace {
+			return fmt.Errorf("pod %s is in namespace %q, does not match out namespace %q: %w", pod.ID(), pod.config.Namespace, s.namespace, define.ErrNSMismatch)
+		}
 	}
 
 	if podDB != nil && pod != nil {
@@ -948,6 +965,9 @@ func (s *BoltState) removeContainer(ctr *Container, pod *Pod, tx *bolt.Tx) error
 	if err := namesBucket.Delete(ctrName); err != nil {
 		return fmt.Errorf("deleting container %s name in DB: %w", ctr.ID(), err)
 	}
+	if err := nsBucket.Delete(ctrID); err != nil {
+		return fmt.Errorf("deleting container %s namespace in DB: %w", ctr.ID(), err)
+	}
 	if err := allCtrsBucket.Delete(ctrID); err != nil {
 		return fmt.Errorf("deleting container %s from all containers bucket in DB: %w", ctr.ID(), err)
 	}
@@ -1007,11 +1027,14 @@ func (s *BoltState) removeContainer(ctr *Container, pod *Pod, tx *bolt.Tx) error
 
 // lookupContainerID retrieves a container ID from the state by full or unique
 // partial ID or name.
-func (s *BoltState) lookupContainerID(idOrName string, ctrBucket, namesBucket *bolt.Bucket) ([]byte, error) {
+// NOTE: the retrieved container ID namespace may not match the state namespace.
+func (s *BoltState) lookupContainerID(idOrName string, ctrBucket, namesBucket, nsBucket *bolt.Bucket) ([]byte, error) {
 	// First, check if the ID given was the actual container ID
 	ctrExists := ctrBucket.Bucket([]byte(idOrName))
 	if ctrExists != nil {
 		// A full container ID was given.
+		// It might not be in our namespace, but this will be handled
+		// the callers.
 		return []byte(idOrName), nil
 	}
 
@@ -1041,6 +1064,14 @@ func (s *BoltState) lookupContainerID(idOrName string, ctrBucket, namesBucket *b
 	// Search for partial ID matches.
 	exists := false
 	err := ctrBucket.ForEach(func(checkID, checkName []byte) error {
+		// If the container isn't in our namespace, we
+		// can't match it
+		if s.namespaceBytes != nil {
+			ns := nsBucket.Get(checkID)
+			if !bytes.Equal(ns, s.namespaceBytes) {
+				return nil
+			}
+		}
 		if strings.HasPrefix(string(checkID), idOrName) {
 			if exists {
 				return fmt.Errorf("more than one result for container ID %s: %w", idOrName, define.ErrCtrExists)

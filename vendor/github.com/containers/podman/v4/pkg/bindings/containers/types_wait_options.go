@@ -18,19 +18,19 @@ func (o *WaitOptions) ToParams() (url.Values, error) {
 	return util.ToParams(o)
 }
 
-// WithConditions set field Conditions to given value
-func (o *WaitOptions) WithConditions(value []string) *WaitOptions {
-	o.Conditions = value
+// WithCondition set field Condition to given value
+func (o *WaitOptions) WithCondition(value []define.ContainerStatus) *WaitOptions {
+	o.Condition = value
 	return o
 }
 
-// GetConditions returns value of field Conditions
-func (o *WaitOptions) GetConditions() []string {
-	if o.Conditions == nil {
-		var z []string
+// GetCondition returns value of field Condition
+func (o *WaitOptions) GetCondition() []define.ContainerStatus {
+	if o.Condition == nil {
+		var z []define.ContainerStatus
 		return z
 	}
-	return o.Conditions
+	return o.Condition
 }
 
 // WithInterval set field Interval to given value
@@ -46,19 +46,4 @@ func (o *WaitOptions) GetInterval() string {
 		return z
 	}
 	return *o.Interval
-}
-
-// WithCondition set field Condition to given value
-func (o *WaitOptions) WithCondition(value []define.ContainerStatus) *WaitOptions {
-	o.Condition = value
-	return o
-}
-
-// GetCondition returns value of field Condition
-func (o *WaitOptions) GetCondition() []define.ContainerStatus {
-	if o.Condition == nil {
-		var z []define.ContainerStatus
-		return z
-	}
-	return o.Condition
 }

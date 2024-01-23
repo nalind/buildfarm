@@ -17,21 +17,6 @@ func (o *KubeOptions) ToParams() (url.Values, error) {
 	return util.ToParams(o)
 }
 
-// WithPodmanOnly set field PodmanOnly to given value
-func (o *KubeOptions) WithPodmanOnly(value bool) *KubeOptions {
-	o.PodmanOnly = &value
-	return o
-}
-
-// GetPodmanOnly returns value of field PodmanOnly
-func (o *KubeOptions) GetPodmanOnly() bool {
-	if o.PodmanOnly == nil {
-		var z bool
-		return z
-	}
-	return *o.PodmanOnly
-}
-
 // WithService set field Service to given value
 func (o *KubeOptions) WithService(value bool) *KubeOptions {
 	o.Service = &value
@@ -45,49 +30,4 @@ func (o *KubeOptions) GetService() bool {
 		return z
 	}
 	return *o.Service
-}
-
-// WithType set field Type to given value
-func (o *KubeOptions) WithType(value string) *KubeOptions {
-	o.Type = &value
-	return o
-}
-
-// GetType returns value of field Type
-func (o *KubeOptions) GetType() string {
-	if o.Type == nil {
-		var z string
-		return z
-	}
-	return *o.Type
-}
-
-// WithReplicas set field Replicas to given value
-func (o *KubeOptions) WithReplicas(value int32) *KubeOptions {
-	o.Replicas = &value
-	return o
-}
-
-// GetReplicas returns value of field Replicas
-func (o *KubeOptions) GetReplicas() int32 {
-	if o.Replicas == nil {
-		var z int32
-		return z
-	}
-	return *o.Replicas
-}
-
-// WithNoTrunc set field NoTrunc to given value
-func (o *KubeOptions) WithNoTrunc(value bool) *KubeOptions {
-	o.NoTrunc = &value
-	return o
-}
-
-// GetNoTrunc returns value of field NoTrunc
-func (o *KubeOptions) GetNoTrunc() bool {
-	if o.NoTrunc == nil {
-		var z bool
-		return z
-	}
-	return *o.NoTrunc
 }

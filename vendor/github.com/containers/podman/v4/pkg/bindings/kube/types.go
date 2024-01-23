@@ -4,9 +4,8 @@ import (
 	"net"
 )
 
-// PlayOptions are optional options for replaying kube YAML files
-//
 //go:generate go run ../generator/generator.go PlayOptions
+// PlayOptions are optional options for replaying kube YAML files
 type PlayOptions struct {
 	// Annotations - Annotations to add to Pods
 	Annotations map[string]string
@@ -42,47 +41,8 @@ type PlayOptions struct {
 	LogDriver *string
 	// LogOptions for the container. For example: journald
 	LogOptions *[]string
-	// Replace - replace existing pods and containers
-	Replace *bool
 	// Start - don't start the pod if false
 	Start *bool
-	// NoTrunc - use annotations that were not truncated to the
-	// Kubernetes maximum of 63 characters
-	NoTrunc *bool
 	// Userns - define the user namespace to use.
 	Userns *string
-	// Force - remove volumes on --down
-	Force *bool
-	// PublishPorts - configure how to expose ports configured inside the K8S YAML file
-	PublishPorts []string
-	// PublishAllPorts - whether to publish all ports defined in the K8S YAML file
-	// (containerPort, hostPort) otherwise only hostPort will be published
-	PublishAllPorts *bool
-	// Wait - indicates whether to return after having created the pods
-	Wait             *bool
-	ServiceContainer *bool
-}
-
-// ApplyOptions are optional options for applying kube YAML files to a k8s cluster
-//
-//go:generate go run ../generator/generator.go ApplyOptions
-type ApplyOptions struct {
-	// Kubeconfig - path to the cluster's kubeconfig file.
-	Kubeconfig *string
-	// Namespace - namespace to deploy the workload in on the cluster.
-	Namespace *string
-	// CACertFile - the path to the CA cert file for the Kubernetes cluster.
-	CACertFile *string
-	// File - the path to the Kubernetes yaml to deploy.
-	File *string
-	// Service - creates a service for the container being deployed.
-	Service *bool
-}
-
-// DownOptions are optional options for tearing down kube YAML files to a k8s cluster
-//
-//go:generate go run ../generator/generator.go DownOptions
-type DownOptions struct {
-	// Force - remove volumes on --down
-	Force *bool
 }

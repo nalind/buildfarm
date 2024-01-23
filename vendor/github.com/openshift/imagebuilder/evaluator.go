@@ -7,7 +7,6 @@ import (
 
 	"github.com/openshift/imagebuilder/dockerfile/command"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
-	buildkitparser "github.com/moby/buildkit/frontend/dockerfile/parser"
 )
 
 // ParseDockerfile parses the provided stream as a canonical Dockerfile
@@ -56,7 +55,6 @@ type Step struct {
 	Flags    []string
 	Attrs    map[string]bool
 	Message  string
-	Heredocs   []buildkitparser.Heredoc
 	Original string
 }
 
@@ -76,7 +74,6 @@ type Step struct {
 // deal with that, at least until it becomes more of a general concern with new
 // features.
 func (b *Step) Resolve(ast *parser.Node) error {
-	b.Heredocs = ast.Heredocs
 	cmd := ast.Value
 	upperCasedCmd := strings.ToUpper(cmd)
 

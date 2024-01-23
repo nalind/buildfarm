@@ -12,11 +12,6 @@ import (
 	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
-func (ic *ContainerEngine) NetworkUpdate(ctx context.Context, netName string, opts entities.NetworkUpdateOptions) error {
-	options := new(network.UpdateOptions).WithAddDNSServers(opts.AddDNSServers).WithRemoveDNSServers(opts.RemoveDNSServers)
-	return network.Update(ic.ClientCtx, netName, options)
-}
-
 func (ic *ContainerEngine) NetworkList(ctx context.Context, opts entities.NetworkListOptions) ([]types.Network, error) {
 	options := new(network.ListOptions).WithFilters(opts.Filters)
 	return network.List(ic.ClientCtx, options)
@@ -71,12 +66,8 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 	return reports, nil
 }
 
-func (ic *ContainerEngine) NetworkCreate(ctx context.Context, net types.Network, createOptions *types.NetworkCreateOptions) (*types.Network, error) {
-	options := new(network.ExtraCreateOptions)
-	if createOptions != nil {
-		options = options.WithIgnoreIfExists(createOptions.IgnoreIfExists)
-	}
-	net, err := network.CreateWithOptions(ic.ClientCtx, &net, options)
+func (ic *ContainerEngine) NetworkCreate(ctx context.Context, net types.Network) (*types.Network, error) {
+	net, err := network.Create(ic.ClientCtx, &net)
 	if err != nil {
 		return nil, err
 	}

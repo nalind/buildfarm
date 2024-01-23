@@ -3,10 +3,8 @@
 
 package criu
 
-import "fmt"
-
-func CheckForCriu(version int) error {
-	return fmt.Errorf("CheckForCriu not supported on this platform")
+func CheckForCriu(version int) bool {
+	return false
 }
 
 func MemTrack() bool {

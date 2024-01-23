@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package generate
 
 import (
@@ -64,8 +61,10 @@ type podInfo struct {
 	PodCreateCommand string
 	// EnvVariable is generate.EnvVariable and must not be set.
 	EnvVariable string
-	// ExecStartPre of the unit.
-	ExecStartPre string
+	// ExecStartPre1 of the unit.
+	ExecStartPre1 string
+	// ExecStartPre2 of the unit.
+	ExecStartPre2 string
 	// ExecStart of the unit.
 	ExecStart string
 	// TimeoutStopSec of the unit.
@@ -116,8 +115,11 @@ Restart={{{{.RestartPolicy}}}}
 RestartSec={{{{.RestartSec}}}}
 {{{{- end}}}}
 TimeoutStopSec={{{{.TimeoutStopSec}}}}
-{{{{- if .ExecStartPre}}}}
-ExecStartPre={{{{.ExecStartPre}}}}
+{{{{- if .ExecStartPre1}}}}
+ExecStartPre={{{{.ExecStartPre1}}}}
+{{{{- end}}}}
+{{{{- if .ExecStartPre2}}}}
+ExecStartPre={{{{.ExecStartPre2}}}}
 {{{{- end}}}}
 ExecStart={{{{.ExecStart}}}}
 ExecStop={{{{.ExecStop}}}}
@@ -173,7 +175,6 @@ func PodUnits(pod *libpod.Pod, options entities.GenerateSystemdOptions) (map[str
 		if ctr.ID() == infraID {
 			continue
 		}
-
 		ctrInfo, err := generateContainerInfo(ctr, options)
 		if err != nil {
 			return nil, err
@@ -370,7 +371,8 @@ func executePodTemplate(info *podInfo, options entities.GenerateSystemdOptions) 
 		startCommand = append(startCommand, podCreateArgs...)
 		startCommand = escapeSystemdArguments(startCommand)
 
-		info.ExecStartPre = formatOptions(startCommand)
+		info.ExecStartPre1 = formatOptionsString("/bin/rm -f {{{{.PIDFile}}}} {{{{.PodIDFile}}}}")
+		info.ExecStartPre2 = formatOptions(startCommand)
 		info.ExecStart = formatOptionsString("{{{{.Executable}}}} {{{{if .RootFlags}}}}{{{{ .RootFlags}}}} {{{{end}}}}pod start --pod-id-file {{{{.PodIDFile}}}}")
 		info.ExecStop = formatOptionsString("{{{{.Executable}}}} {{{{if .RootFlags}}}}{{{{ .RootFlags}}}} {{{{end}}}}pod stop --ignore --pod-id-file {{{{.PodIDFile}}}} {{{{if (ge .StopTimeout 0)}}}} -t {{{{.StopTimeout}}}}{{{{end}}}}")
 		info.ExecStopPost = formatOptionsString("{{{{.Executable}}}} {{{{if .RootFlags}}}}{{{{ .RootFlags}}}} {{{{end}}}}pod rm --ignore -f --pod-id-file {{{{.PodIDFile}}}}")
@@ -387,7 +389,7 @@ func executePodTemplate(info *podInfo, options entities.GenerateSystemdOptions) 
 	}
 
 	if info.GenerateTimestamp {
-		info.TimeStamp = time.Now().Format(time.UnixDate)
+		info.TimeStamp = fmt.Sprintf("%v", time.Now().Format(time.UnixDate))
 	}
 
 	// Sort the slices to assure a deterministic output.

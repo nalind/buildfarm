@@ -4,27 +4,21 @@
 package criu
 
 import (
-	"fmt"
-
-	"github.com/checkpoint-restore/go-criu/v7"
-	"github.com/checkpoint-restore/go-criu/v7/rpc"
+	"github.com/checkpoint-restore/go-criu/v5"
+	"github.com/checkpoint-restore/go-criu/v5/rpc"
 
 	"google.golang.org/protobuf/proto"
 )
 
 // CheckForCriu uses CRIU's go bindings to check if the CRIU
 // binary exists and if it at least the version Podman needs.
-func CheckForCriu(version int) error {
+func CheckForCriu(version int) bool {
 	c := criu.MakeCriu()
-	criuVersion, err := c.GetCriuVersion()
+	result, err := c.IsCriuAtLeast(version)
 	if err != nil {
-		return fmt.Errorf("failed to check for criu version: %w", err)
+		return false
 	}
-
-	if criuVersion >= version {
-		return nil
-	}
-	return fmt.Errorf("checkpoint/restore requires at least CRIU %d, current version is %d", version, criuVersion)
+	return result
 }
 
 func MemTrack() bool {
@@ -37,7 +31,11 @@ func MemTrack() bool {
 		return false
 	}
 
-	return features.GetMemTrack()
+	if features == nil || features.MemTrack == nil {
+		return false
+	}
+
+	return *features.MemTrack
 }
 
 func GetCriuVersion() (int, error) {

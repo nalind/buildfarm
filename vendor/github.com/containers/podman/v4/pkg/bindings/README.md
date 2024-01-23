@@ -26,7 +26,7 @@ It can be handy to run the system service manually.  Doing so allows you to enab
 $ podman --log-level=debug system service -t0
 ```
 If you do not provide a specific path for the socket, a default is provided.  The location of that socket for
-rootful connections is `/run/podman/podman.sock` and for rootless it is `/run/user/USERID#/podman/podman.sock`. For more
+rootful connections is `/run/podman/podman.sock` and for rootless it is `/run/USERID#/podman/podman.sock`. For more
 information about the Podman system service, see `man podman-system-service`.
 
 ### Creating a connection
@@ -47,7 +47,7 @@ import (
 )
 
 func main() {
-	conn, err := bindings.NewConnection(context.Background(), "unix:///run/podman/podman.sock")
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -79,7 +79,7 @@ import (
 )
 
 func main() {
-	conn, err := bindings.NewConnection(context.Background(), "unix:///run/podman/podman.sock")
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -107,7 +107,7 @@ import (
 )
 
 func main() {
-	conn, err := bindings.NewConnection(context.Background(), "unix:///run/podman/podman.sock")
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -137,7 +137,7 @@ import (
 )
 
 func main() {
-	conn, err := bindings.NewConnection(context.Background(), "unix:///run/podman/podman.sock")
+	conn, err := bindings.NewConnection(context.Background(), "unix://run/podman/podman.sock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

@@ -8,7 +8,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 )
 
-type ImageEngine interface { //nolint:interfacebloat
+type ImageEngine interface {
 	Build(ctx context.Context, containerFiles []string, opts BuildOptions) (*BuildReport, error)
 	Config(ctx context.Context) (*config.Config, error)
 	Exists(ctx context.Context, nameOrID string) (*BoolReport, error)
@@ -20,7 +20,7 @@ type ImageEngine interface { //nolint:interfacebloat
 	Mount(ctx context.Context, images []string, options ImageMountOptions) ([]*ImageMountReport, error)
 	Prune(ctx context.Context, opts ImagePruneOptions) ([]*reports.PruneReport, error)
 	Pull(ctx context.Context, rawImage string, opts ImagePullOptions) (*ImagePullReport, error)
-	Push(ctx context.Context, source string, destination string, opts ImagePushOptions) (*ImagePushReport, error)
+	Push(ctx context.Context, source string, destination string, opts ImagePushOptions) error
 	Remove(ctx context.Context, images []string, opts ImageRemoveOptions) (*ImageRemoveReport, []error)
 	Save(ctx context.Context, nameOrID string, tags []string, options ImageSaveOptions) error
 	Scp(ctx context.Context, src, dst string, parentFlags []string, quiet bool, sshMode ssh.EngineMode) error
@@ -34,17 +34,11 @@ type ImageEngine interface { //nolint:interfacebloat
 	Untag(ctx context.Context, nameOrID string, tags []string, options ImageUntagOptions) error
 	ManifestCreate(ctx context.Context, name string, images []string, opts ManifestCreateOptions) (string, error)
 	ManifestExists(ctx context.Context, name string) (*BoolReport, error)
-	ManifestInspect(ctx context.Context, name string, opts ManifestInspectOptions) ([]byte, error)
+	ManifestInspect(ctx context.Context, name string) ([]byte, error)
 	ManifestAdd(ctx context.Context, listName string, imageNames []string, opts ManifestAddOptions) (string, error)
 	ManifestAnnotate(ctx context.Context, names, image string, opts ManifestAnnotateOptions) (string, error)
 	ManifestRemoveDigest(ctx context.Context, names, image string) (string, error)
 	ManifestRm(ctx context.Context, names []string) (*ImageRemoveReport, []error)
 	ManifestPush(ctx context.Context, name, destination string, imagePushOpts ImagePushOptions) (string, error)
-	ManifestListClear(ctx context.Context, name string) (string, error)
 	Sign(ctx context.Context, names []string, options SignOptions) (*SignReport, error)
-	FarmNodeName(ctx context.Context) string
-	FarmNodeDriver(ctx context.Context) string
-	FarmNodeInspect(ctx context.Context) (*FarmInspectReport, error)
-	PullToFile(ctx context.Context, options PullToFileOptions) (string, error)
-	PullToLocal(ctx context.Context, options PullToLocalOptions) (string, error)
 }

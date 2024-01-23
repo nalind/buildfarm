@@ -13,7 +13,7 @@ import (
 
 type ContainerCopyFunc func() error
 
-type ContainerEngine interface { //nolint:interfacebloat
+type ContainerEngine interface {
 	AutoUpdate(ctx context.Context, options AutoUpdateOptions) ([]*AutoUpdateReport, []error)
 	Config(ctx context.Context) (*config.Config, error)
 	ContainerAttach(ctx context.Context, nameOrID string, options AttachOptions) error
@@ -61,11 +61,8 @@ type ContainerEngine interface { //nolint:interfacebloat
 	SystemPrune(ctx context.Context, options SystemPruneOptions) (*SystemPruneReport, error)
 	HealthCheckRun(ctx context.Context, nameOrID string, options HealthCheckOptions) (*define.HealthCheckResults, error)
 	Info(ctx context.Context) (*define.Info, error)
-	KubeApply(ctx context.Context, body io.Reader, opts ApplyOptions) error
-	Locks(ctx context.Context) (*LocksReport, error)
 	NetworkConnect(ctx context.Context, networkname string, options NetworkConnectOptions) error
-	NetworkCreate(ctx context.Context, network types.Network, createOptions *types.NetworkCreateOptions) (*types.Network, error)
-	NetworkUpdate(ctx context.Context, networkname string, options NetworkUpdateOptions) error
+	NetworkCreate(ctx context.Context, network types.Network) (*types.Network, error)
 	NetworkDisconnect(ctx context.Context, networkname string, options NetworkDisconnectOptions) error
 	NetworkExists(ctx context.Context, networkname string) (*BoolReport, error)
 	NetworkInspect(ctx context.Context, namesOrIds []string, options InspectOptions) ([]types.Network, []error, error)
@@ -93,10 +90,9 @@ type ContainerEngine interface { //nolint:interfacebloat
 	PodUnpause(ctx context.Context, namesOrIds []string, options PodunpauseOptions) ([]*PodUnpauseReport, error)
 	SetupRootless(ctx context.Context, noMoveProcess bool) error
 	SecretCreate(ctx context.Context, name string, reader io.Reader, options SecretCreateOptions) (*SecretCreateReport, error)
-	SecretInspect(ctx context.Context, nameOrIDs []string, options SecretInspectOptions) ([]*SecretInfoReport, []error, error)
+	SecretInspect(ctx context.Context, nameOrIDs []string) ([]*SecretInfoReport, []error, error)
 	SecretList(ctx context.Context, opts SecretListRequest) ([]*SecretInfoReport, error)
 	SecretRm(ctx context.Context, nameOrID []string, opts SecretRmOptions) ([]*SecretRmReport, error)
-	SecretExists(ctx context.Context, nameOrID string) (*BoolReport, error)
 	Shutdown(ctx context.Context)
 	SystemDf(ctx context.Context, options SystemDfOptions) (*SystemDfReport, error)
 	Unshare(ctx context.Context, args []string, options SystemUnshareOptions) error

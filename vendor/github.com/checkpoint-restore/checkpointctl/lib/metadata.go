@@ -29,9 +29,6 @@ const (
 	PodDumpFile    = "pod.dump"
 	// containerd only
 	StatusFile = "status"
-	// CRIU Images
-	PagesPrefix       = "pages-"
-	AmdgpuPagesPrefix = "amdgpu-pages-"
 )
 
 // This is a reduced copy of what Podman uses to store checkpoint metadata

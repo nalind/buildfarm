@@ -4,14 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
-	"github.com/containers/buildah/internal/tmpdir"
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh"
@@ -69,18 +68,11 @@ func newAgentServerSocket(socketPath string) (*AgentServer, error) {
 
 // Serve starts the SSH agent on the host and returns the path of the socket where the agent is serving
 func (a *AgentServer) Serve(processLabel string) (string, error) {
-	// Calls to `selinux.SetSocketLabel` should be wrapped in
-	// runtime.LockOSThread()/runtime.UnlockOSThread() until
-	// the the socket is created to guarantee another goroutine
-	// does not migrate to the current thread before execution
-	// is complete.
-	// Ref: https://github.com/opencontainers/selinux/blob/main/go-selinux/selinux.go#L158
-	runtime.LockOSThread()
 	err := selinux.SetSocketLabel(processLabel)
 	if err != nil {
 		return "", err
 	}
-	serveDir, err := os.MkdirTemp(tmpdir.GetTempDir(), ".buildah-ssh-sock")
+	serveDir, err := ioutil.TempDir("", ".buildah-ssh-sock")
 	if err != nil {
 		return "", err
 	}
@@ -91,12 +83,7 @@ func (a *AgentServer) Serve(processLabel string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Reset socket label.
 	err = selinux.SetSocketLabel("")
-	// Unlock the thread only if the process label could be restored
-	// successfully.  Otherwise leave the thread locked and the Go runtime
-	// will terminate it once it returns to the threads pool.
-	runtime.UnlockOSThread()
 	if err != nil {
 		return "", err
 	}
@@ -165,7 +152,7 @@ func (a *AgentServer) ServePath() string {
 // readOnlyAgent implemetnts the agent.Agent interface
 // readOnlyAgent allows reads only to prevent keys from being added from the build to the forwarded ssh agent on the host
 type readOnlyAgent struct {
-	agent.ExtendedAgent
+	agent.Agent
 }
 
 func (a *readOnlyAgent) Add(_ agent.AddedKey) error {
@@ -184,10 +171,6 @@ func (a *readOnlyAgent) Lock(_ []byte) error {
 	return errors.New("locking agent not allowed by buildah")
 }
 
-func (a *readOnlyAgent) Extension(_ string, _ []byte) ([]byte, error) {
-	return nil, errors.New("extensions not allowed by buildah")
-}
-
 // Source is what the forwarded agent's source is
 // The source of the forwarded agent can be from a socket on the host, or from individual key files
 type Source struct {
@@ -202,13 +185,8 @@ func NewSource(paths []string) (*Source, error) {
 	if len(paths) == 0 {
 		socket = os.Getenv("SSH_AUTH_SOCK")
 		if socket == "" {
-			return nil, errors.New("SSH_AUTH_SOCK not set in environment")
+			return nil, errors.New("$SSH_AUTH_SOCK not set")
 		}
-		absSocket, err := filepath.Abs(socket)
-		if err != nil {
-			return nil, fmt.Errorf("evaluating SSH_AUTH_SOCK in environment: %w", err)
-		}
-		socket = absSocket
 	}
 	for _, p := range paths {
 		if socket != "" {
@@ -232,7 +210,7 @@ func NewSource(paths []string) (*Source, error) {
 		if err != nil {
 			return nil, err
 		}
-		dt, err := io.ReadAll(&io.LimitedReader{R: f, N: 100 * 1024})
+		dt, err := ioutil.ReadAll(&io.LimitedReader{R: f, N: 100 * 1024})
 		if err != nil {
 			return nil, err
 		}

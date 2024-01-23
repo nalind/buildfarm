@@ -13,7 +13,6 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 
-	buildkitparser "github.com/moby/buildkit/frontend/dockerfile/parser"
 	"github.com/openshift/imagebuilder/dockerfile/command"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
@@ -30,20 +29,8 @@ type Copy struct {
 	Download bool
 	// If set, the owner:group for the destination.  This value is passed
 	// to the executor for handling.
-	Chown    string
-	Chmod    string
-	Checksum string
-	// Additional files which need to be created by executor for this
-	// instruction.
-	Files []File
-}
-
-// File defines if any additional file needs to be created
-// by the executor instruction so that specified command
-// can execute/copy the created file inside the build container.
-type File struct {
-	Name string // Name of the new file.
-	Data string // Content of the file.
+	Chown string
+	Chmod string
 }
 
 // Run defines a run operation required in the container.
@@ -52,19 +39,11 @@ type Run struct {
 	Args  []string
 	// Mounts are mounts specified through the --mount flag inside the Containerfile
 	Mounts []string
-	// Network specifies the network mode to run the container with
-	Network string
-	// Additional files which need to be created by executor for this
-	// instruction.
-	Files []File
 }
 
 type Executor interface {
 	Preserve(path string) error
-	// EnsureContainerPath should ensure that the directory exists, creating any components required
 	EnsureContainerPath(path string) error
-	// EnsureContainerPathAs should ensure that the directory exists, creating any components required
-	// with the specified owner and mode, if either is specified
 	EnsureContainerPathAs(path, user string, mode *os.FileMode) error
 	Copy(excludes []string, copies ...Copy) error
 	Run(run Run, config docker.Config) error
@@ -94,7 +73,7 @@ func (logExecutor) EnsureContainerPathAs(path, user string, mode *os.FileMode) e
 
 func (logExecutor) Copy(excludes []string, copies ...Copy) error {
 	for _, c := range copies {
-		log.Printf("COPY %v -> %s (from:%s download:%t), chown: %s, chmod %s, checksum: %s", c.Src, c.Dest, c.From, c.Download, c.Chown, c.Chmod, c.Checksum)
+		log.Printf("COPY %v -> %s (from:%s download:%t), chown: %s, chmod %s", c.Src, c.Dest, c.From, c.Download, c.Chown, c.Chmod)
 	}
 	return nil
 }
@@ -410,7 +389,7 @@ func (b *Builder) Run(step *Step, exec Executor, noRunsRemaining bool) error {
 	if !ok {
 		return exec.UnrecognizedInstruction(step)
 	}
-	if err := fn(b, step.Args, step.Attrs, step.Flags, step.Original, step.Heredocs); err != nil {
+	if err := fn(b, step.Args, step.Attrs, step.Flags, step.Original); err != nil {
 		return err
 	}
 
@@ -590,7 +569,7 @@ func SplitBy(node *parser.Node, value string) []*parser.Node {
 }
 
 // StepFunc is invoked with the result of a resolved step.
-type StepFunc func(*Builder, []string, map[string]bool, []string, string, []buildkitparser.Heredoc) error
+type StepFunc func(*Builder, []string, map[string]bool, []string, string) error
 
 var evaluateTable = map[string]StepFunc{
 	command.Env:         env,

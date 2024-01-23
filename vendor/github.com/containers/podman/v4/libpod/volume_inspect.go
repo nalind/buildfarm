@@ -1,6 +1,3 @@
-//go:build !remote
-// +build !remote
-
 package libpod
 
 import (
@@ -68,7 +65,6 @@ func (v *Volume) Inspect() (*define.InspectVolumeData, error) {
 	data.NeedsCopyUp = v.state.NeedsCopyUp
 	data.NeedsChown = v.state.NeedsChown
 	data.StorageID = v.config.StorageID
-	data.LockNumber = v.lock.ID()
 
 	if v.config.Timeout != nil {
 		data.Timeout = *v.config.Timeout

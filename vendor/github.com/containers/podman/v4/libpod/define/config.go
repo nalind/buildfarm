@@ -3,6 +3,7 @@ package define
 import (
 	"bufio"
 	"io"
+	"regexp"
 
 	"github.com/containers/common/libnetwork/types"
 )
@@ -19,6 +20,8 @@ var (
 	NameRegex = types.NameRegex
 	// RegexError is thrown in presence of an invalid container/pod name.
 	RegexError = types.RegexError
+	// UmaskRegex is a regular expression to validate Umask.
+	UmaskRegex = regexp.MustCompile(`^[0-7]{1,4}$`)
 )
 
 const (
@@ -51,9 +54,9 @@ const (
 // AttachStreams contains streams that will be attached to the container
 type AttachStreams struct {
 	// OutputStream will be attached to container's STDOUT
-	OutputStream io.Writer
+	OutputStream io.WriteCloser
 	// ErrorStream will be attached to container's STDERR
-	ErrorStream io.Writer
+	ErrorStream io.WriteCloser
 	// InputStream will be attached to container's STDIN
 	InputStream *bufio.Reader
 	// AttachOutput is whether to attach to STDOUT

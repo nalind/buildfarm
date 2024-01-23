@@ -1,10 +1,11 @@
-//go:build !remote
-// +build !remote
+//go:build linux
+// +build linux
 
 package libpod
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"syscall"
 	"time"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/podman/v4/libpod/define"
-	"golang.org/x/sys/unix"
 )
 
 // getPlatformContainerStats gets the platform-specific running stats
@@ -59,7 +59,7 @@ func (c *Container) getPlatformContainerStats(stats *define.ContainerStats, prev
 	// calc the average cpu usage for the time the container is running
 	stats.AvgCPU = calculateCPUPercent(cgroupStats, 0, now, uint64(c.state.StartedTime.UnixNano()))
 	stats.MemUsage = cgroupStats.MemoryStats.Usage.Usage
-	stats.MemLimit = c.getMemLimit(cgroupStats.MemoryStats.Usage.Limit)
+	stats.MemLimit = c.getMemLimit()
 	stats.MemPerc = (float64(stats.MemUsage) / float64(stats.MemLimit)) * 100
 	stats.PIDs = 0
 	if conState == define.ContainerStateRunning || conState == define.ContainerStatePaused {
@@ -72,8 +72,8 @@ func (c *Container) getPlatformContainerStats(stats *define.ContainerStats, prev
 	stats.PerCPU = cgroupStats.CpuStats.CpuUsage.PercpuUsage
 	// Handle case where the container is not in a network namespace
 	if netStats != nil {
-		stats.NetInput = netStats.RxBytes
-		stats.NetOutput = netStats.TxBytes
+		stats.NetInput = netStats.TxBytes
+		stats.NetOutput = netStats.RxBytes
 	} else {
 		stats.NetInput = 0
 		stats.NetOutput = 0
@@ -83,7 +83,14 @@ func (c *Container) getPlatformContainerStats(stats *define.ContainerStats, prev
 }
 
 // getMemory limit returns the memory limit for a container
-func (c *Container) getMemLimit(memLimit uint64) uint64 {
+func (c *Container) getMemLimit() uint64 {
+	memLimit := uint64(math.MaxUint64)
+
+	if c.config.Spec.Linux != nil && c.config.Spec.Linux.Resources != nil &&
+		c.config.Spec.Linux.Resources.Memory != nil && c.config.Spec.Linux.Resources.Memory.Limit != nil {
+		memLimit = uint64(*c.config.Spec.Linux.Resources.Memory.Limit)
+	}
+
 	si := &syscall.Sysinfo_t{}
 	err := syscall.Sysinfo(si)
 	if err != nil {
@@ -129,19 +136,4 @@ func calculateBlockIO(stats *runccgroup.Stats) (read uint64, write uint64) {
 		}
 	}
 	return
-}
-
-func getOnlineCPUs(container *Container) (int, error) {
-	ctrPID, err := container.PID()
-	if err != nil {
-		return -1, fmt.Errorf("failed to obtain Container %s PID: %w", container.Name(), err)
-	}
-	if ctrPID == 0 {
-		return ctrPID, define.ErrCtrStopped
-	}
-	var cpuSet unix.CPUSet
-	if err := unix.SchedGetaffinity(ctrPID, &cpuSet); err != nil {
-		return -1, fmt.Errorf("failed to obtain Container %s online cpus: %w", container.Name(), err)
-	}
-	return cpuSet.Count(), nil
 }
