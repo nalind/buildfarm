@@ -3,9 +3,9 @@ module github.com/nalind/buildfarm
 go 1.22.0
 
 require (
-	github.com/containers/buildah v1.33.7
-	github.com/containers/common v0.57.4
-	github.com/containers/image/v5 v5.29.2
+	github.com/containers/buildah v1.33.8
+	github.com/containers/common v0.57.5
+	github.com/containers/image/v5 v5.29.3
 	github.com/containers/podman/v4 v4.9.4
 	github.com/containers/storage v1.51.0
 	github.com/docker/go-units v0.5.0
@@ -42,7 +42,7 @@ require (
 	github.com/containers/conmon v2.0.20+incompatible // indirect
 	github.com/containers/libtrust v0.0.0-20230121012942-c1716e8a8d01 // indirect
 	github.com/containers/luksy v0.0.0-20231030195837-b5a7f79da98b // indirect
-	github.com/containers/ocicrypt v1.1.9 // indirect
+	github.com/containers/ocicrypt v1.1.10 // indirect
 	github.com/containers/psgo v1.8.0 // indirect
 	github.com/coreos/go-systemd v0.0.0-20190719114852-fd7a80b32e1f // indirect
 	github.com/coreos/go-systemd/v22 v22.5.1-0.20231103132048-7d375ecc2b09 // indirect
