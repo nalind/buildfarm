@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/containers/common/pkg/secrets/define"
 	"github.com/containers/common/pkg/secrets/filedriver"
 	"github.com/containers/common/pkg/secrets/passdriver"
 	"github.com/containers/common/pkg/secrets/shelldriver"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/regexp"
 	"github.com/containers/storage/pkg/stringid"
+	"golang.org/x/exp/maps"
 )
 
 // maxSecretSize is the max size for secret data - 512kB
@@ -25,7 +27,7 @@ const secretIDLength = 25
 var errInvalidPath = errors.New("invalid secrets path")
 
 // ErrNoSuchSecret indicates that the secret does not exist
-var ErrNoSuchSecret = errors.New("no such secret")
+var ErrNoSuchSecret = define.ErrNoSuchSecret
 
 // errSecretNameInUse indicates that the secret name is already in use
 var errSecretNameInUse = errors.New("secret name in use")
@@ -150,7 +152,7 @@ func (s *SecretsManager) newID() (string, error) {
 		newID = newID[0:secretIDLength]
 		_, err := s.lookupSecret(newID)
 		if err != nil {
-			if errors.Is(err, ErrNoSuchSecret) {
+			if errors.Is(err, define.ErrNoSuchSecret) {
 				return newID, nil
 			}
 			return "", err
@@ -216,12 +218,15 @@ func (s *SecretsManager) Store(name string, data []byte, driverType string, opti
 	}
 
 	if options.Replace {
-		if err := driver.Delete(secr.ID); err != nil {
-			return "", fmt.Errorf("deleting secret %s: %w", secr.ID, err)
-		}
-
-		if err := s.delete(secr.ID); err != nil {
-			return "", fmt.Errorf("deleting secret %s: %w", secr.ID, err)
+		err := driver.Delete(secr.ID)
+		if err != nil {
+			if !errors.Is(err, define.ErrNoSuchSecret) {
+				return "", fmt.Errorf("deleting driver secret %s: %w", secr.ID, err)
+			}
+		} else {
+			if err := s.delete(secr.ID); err != nil && !errors.Is(err, define.ErrNoSuchSecret) {
+				return "", fmt.Errorf("deleting secret %s: %w", secr.ID, err)
+			}
 		}
 	}
 
@@ -289,11 +294,7 @@ func (s *SecretsManager) List() ([]Secret, error) {
 	if err != nil {
 		return nil, err
 	}
-	ls := make([]Secret, 0, len(secrets))
-	for _, v := range secrets {
-		ls = append(ls, v)
-	}
-	return ls, nil
+	return maps.Values(secrets), nil
 }
 
 // LookupSecretData returns secret metadata as well as secret data in bytes.

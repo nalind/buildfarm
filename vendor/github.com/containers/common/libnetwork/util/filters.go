@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/containers/common/libnetwork/types"
@@ -32,7 +33,7 @@ func createFilterFuncs(key string, filterValues []string) (types.FilterFunc, err
 	case types.Driver:
 		// matches network driver
 		return func(net types.Network) bool {
-			return util.StringInSlice(net.Driver, filterValues)
+			return slices.Contains(filterValues, net.Driver)
 		}, nil
 
 	case "id":
