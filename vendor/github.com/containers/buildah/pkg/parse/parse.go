@@ -7,6 +7,7 @@ package parse
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 	"github.com/containers/buildah/define"
 	mkcwtypes "github.com/containers/buildah/internal/mkcw/types"
 	internalParse "github.com/containers/buildah/internal/parse"
+	"github.com/containers/buildah/internal/sbom"
 	"github.com/containers/buildah/internal/tmpdir"
 	"github.com/containers/buildah/pkg/sshagent"
 	"github.com/containers/common/pkg/auth"
@@ -25,6 +27,7 @@ import (
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/unshare"
 	storageTypes "github.com/containers/storage/types"
@@ -251,14 +254,14 @@ func parseSecurityOpts(securityOpts []string, commonOpts *define.CommonBuildOpti
 	}
 
 	if commonOpts.SeccompProfilePath == "" {
-		if _, err := os.Stat(SeccompOverridePath); err == nil {
+		if err := fileutils.Exists(SeccompOverridePath); err == nil {
 			commonOpts.SeccompProfilePath = SeccompOverridePath
 		} else {
-			if !errors.Is(err, os.ErrNotExist) {
+			if !errors.Is(err, fs.ErrNotExist) {
 				return err
 			}
-			if _, err := os.Stat(SeccompDefaultPath); err != nil {
-				if !errors.Is(err, os.ErrNotExist) {
+			if err := fileutils.Exists(SeccompDefaultPath); err != nil {
+				if !errors.Is(err, fs.ErrNotExist) {
 					return err
 				}
 			} else {
@@ -444,6 +447,89 @@ func SystemContextFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name strin
 
 	ctx.BigFilesTemporaryDir = GetTempDir()
 	return ctx, nil
+}
+
+// pullPolicyWithFlags parses a string value of a pull policy, evaluating it in
+// combination with "always" and "never" boolean flags.
+// Allow for:
+// * --pull
+// * --pull=""
+// * --pull=true
+// * --pull=false
+// * --pull=never
+// * --pull=always
+// * --pull=ifmissing
+// * --pull=missing
+// * --pull=notpresent
+// * --pull=newer
+// * --pull=ifnewer
+// and --pull-always and --pull-never as boolean flags.
+func pullPolicyWithFlags(policySpec string, always, never bool) (define.PullPolicy, error) {
+	if always {
+		return define.PullAlways, nil
+	}
+	if never {
+		return define.PullNever, nil
+	}
+	policy := strings.ToLower(policySpec)
+	switch policy {
+	case "true", "missing", "ifmissing", "notpresent":
+		return define.PullIfMissing, nil
+	case "always":
+		return define.PullAlways, nil
+	case "false", "never":
+		return define.PullNever, nil
+	case "ifnewer", "newer":
+		return define.PullIfNewer, nil
+	}
+	return 0, fmt.Errorf("unrecognized pull policy %q", policySpec)
+}
+
+// PullPolicyFromOptions returns a PullPolicy that reflects the combination of
+// the specified "pull" and undocumented "pull-always" and "pull-never" flags.
+func PullPolicyFromOptions(c *cobra.Command) (define.PullPolicy, error) {
+	return PullPolicyFromFlagSet(c.Flags(), c.Flag)
+}
+
+// PullPolicyFromFlagSet returns a PullPolicy that reflects the combination of
+// the specified "pull" and undocumented "pull-always" and "pull-never" flags.
+func PullPolicyFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name string) *pflag.Flag) (define.PullPolicy, error) {
+	pullFlagsCount := 0
+
+	if findFlagFunc("pull").Changed {
+		pullFlagsCount++
+	}
+	if findFlagFunc("pull-always").Changed {
+		pullFlagsCount++
+	}
+	if findFlagFunc("pull-never").Changed {
+		pullFlagsCount++
+	}
+
+	if pullFlagsCount > 1 {
+		return 0, errors.New("can only set one of 'pull' or 'pull-always' or 'pull-never'")
+	}
+
+	// The --pull-never and --pull-always options will not be documented.
+	pullAlwaysFlagValue, err := flags.GetBool("pull-always")
+	if err != nil {
+		return 0, fmt.Errorf("checking the --pull-always flag value: %w", err)
+	}
+	pullNeverFlagValue, err := flags.GetBool("pull-never")
+	if err != nil {
+		return 0, fmt.Errorf("checking the --pull-never flag value: %w", err)
+	}
+
+	// The --pull[=...] flag is the one we really care about.
+	pullFlagValue := findFlagFunc("pull").Value.String()
+	pullPolicy, err := pullPolicyWithFlags(pullFlagValue, pullAlwaysFlagValue, pullNeverFlagValue)
+	if err != nil {
+		return 0, err
+	}
+
+	logrus.Debugf("Pull Policy for pull [%v]", pullPolicy)
+
+	return pullPolicy, nil
 }
 
 func getAuthFile(authfile string) string {
@@ -709,6 +795,76 @@ func GetConfidentialWorkloadOptions(arg string) (define.ConfidentialWorkloadOpti
 	return options, nil
 }
 
+// SBOMScanOptions parses the build options from the cli
+func SBOMScanOptions(c *cobra.Command) (*define.SBOMScanOptions, error) {
+	return SBOMScanOptionsFromFlagSet(c.Flags(), c.Flag)
+}
+
+// SBOMScanOptionsFromFlagSet parses scan settings from the cli
+func SBOMScanOptionsFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name string) *pflag.Flag) (*define.SBOMScanOptions, error) {
+	preset, err := flags.GetString("sbom")
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom: %w", err)
+	}
+
+	options, err := sbom.Preset(preset)
+	if err != nil {
+		return nil, err
+	}
+	if options == nil {
+		return nil, fmt.Errorf("parsing --sbom flag: unrecognized preset name %q", preset)
+	}
+	image, err := flags.GetString("sbom-scanner-image")
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-scanner-image: %w", err)
+	}
+	commands, err := flags.GetStringArray("sbom-scanner-command")
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-scanner-command: %w", err)
+	}
+	mergeStrategy, err := flags.GetString("sbom-merge-strategy")
+	if err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-merge-strategy: %w", err)
+	}
+
+	if image != "" || len(commands) > 0 || mergeStrategy != "" {
+		options = &define.SBOMScanOptions{
+			Image:         image,
+			Commands:      append([]string{}, commands...),
+			MergeStrategy: define.SBOMMergeStrategy(mergeStrategy),
+		}
+	}
+	if options.ImageSBOMOutput, err = flags.GetString("sbom-image-output"); err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-image-output: %w", err)
+	}
+	if options.SBOMOutput, err = flags.GetString("sbom-output"); err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-output: %w", err)
+	}
+	if options.ImagePURLOutput, err = flags.GetString("sbom-image-purl-output"); err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-image-purl-output: %w", err)
+	}
+	if options.PURLOutput, err = flags.GetString("sbom-purl-output"); err != nil {
+		return nil, fmt.Errorf("invalid value for --sbom-purl-output: %w", err)
+	}
+
+	if options.Image == "" || len(options.Commands) == 0 {
+		return options, fmt.Errorf("sbom configuration missing one or more of (%q or %q)", "--sbom-scanner-image", "--sbom-scanner-command")
+	}
+	if options.SBOMOutput == "" && options.ImageSBOMOutput == "" && options.PURLOutput == "" && options.ImagePURLOutput == "" {
+		return options, fmt.Errorf("sbom configuration missing one or more of (%q, %q, %q or %q)", "--sbom-output", "--sbom-image-output", "--sbom-purl-output", "--sbom-image-purl-output")
+	}
+	if len(options.Commands) > 1 && options.MergeStrategy == "" {
+		return options, fmt.Errorf("sbom configuration included multiple %q values but no %q value", "--sbom-scanner-command", "--sbom-merge-strategy")
+	}
+	switch options.MergeStrategy {
+	default:
+		return options, fmt.Errorf("sbom arguments included unrecognized merge strategy %q", string(options.MergeStrategy))
+	case define.SBOMMergeStrategyCat, define.SBOMMergeStrategyCycloneDXByComponentNameAndVersion, define.SBOMMergeStrategySPDXByPackageNameAndVersionInfo:
+		// all good here
+	}
+	return options, nil
+}
+
 // IDMappingOptions parses the build options related to user namespaces and ID mapping.
 func IDMappingOptions(c *cobra.Command, isolation define.Isolation) (usernsOptions define.NamespaceOptions, idmapOptions *define.IDMappingOptions, err error) {
 	return IDMappingOptionsFromFlagSet(c.Flags(), c.PersistentFlags(), c.Flag)
@@ -857,7 +1013,7 @@ func IDMappingOptionsFromFlagSet(flags *pflag.FlagSet, persistentFlags *pflag.Fl
 				usernsOption.Host = true
 			default:
 				how = strings.TrimPrefix(how, "ns:")
-				if _, err := os.Stat(how); err != nil {
+				if err := fileutils.Exists(how); err != nil {
 					return nil, nil, fmt.Errorf("checking %s namespace: %w", string(specs.UserNamespace), err)
 				}
 				logrus.Debugf("setting %q namespace to %q", string(specs.UserNamespace), how)
@@ -952,7 +1108,7 @@ func NamespaceOptionsFromFlagSet(flags *pflag.FlagSet, findFlagFunc func(name st
 				how = strings.TrimPrefix(how, "ns:")
 				// if not a path we assume it is a comma separated network list, see setupNamespaces() in run_linux.go
 				if filepath.IsAbs(how) || what != string(specs.NetworkNamespace) {
-					if _, err := os.Stat(how); err != nil {
+					if err := fileutils.Exists(how); err != nil {
 						return nil, define.NetworkDefault, fmt.Errorf("checking %s namespace: %w", what, err)
 					}
 				}
@@ -1053,19 +1209,19 @@ func Device(device string) (string, string, string, error) {
 // isValidDeviceMode checks if the mode for device is valid or not.
 // isValid mode is a composition of r (read), w (write), and m (mknod).
 func isValidDeviceMode(mode string) bool {
-	var legalDeviceMode = map[rune]bool{
-		'r': true,
-		'w': true,
-		'm': true,
+	var legalDeviceMode = map[rune]struct{}{
+		'r': {},
+		'w': {},
+		'm': {},
 	}
 	if mode == "" {
 		return false
 	}
 	for _, c := range mode {
-		if !legalDeviceMode[c] {
+		if _, has := legalDeviceMode[c]; !has {
 			return false
 		}
-		legalDeviceMode[c] = false
+		delete(legalDeviceMode, c)
 	}
 	return true
 }
@@ -1118,7 +1274,7 @@ func Secrets(secrets []string) (map[string]define.Secret, error) {
 			if err != nil {
 				return nil, fmt.Errorf("could not parse secrets: %w", err)
 			}
-			_, err = os.Stat(fullPath)
+			err = fileutils.Exists(fullPath)
 			if err != nil {
 				return nil, fmt.Errorf("could not parse secrets: %w", err)
 			}
@@ -1168,10 +1324,10 @@ func ContainerIgnoreFile(contextDir, path string, containerFiles []string) ([]st
 			containerfile = filepath.Join(contextDir, containerfile)
 		}
 		containerfileIgnore := ""
-		if _, err := os.Stat(containerfile + ".containerignore"); err == nil {
+		if err := fileutils.Exists(containerfile + ".containerignore"); err == nil {
 			containerfileIgnore = containerfile + ".containerignore"
 		}
-		if _, err := os.Stat(containerfile + ".dockerignore"); err == nil {
+		if err := fileutils.Exists(containerfile + ".dockerignore"); err == nil {
 			containerfileIgnore = containerfile + ".dockerignore"
 		}
 		if containerfileIgnore != "" {

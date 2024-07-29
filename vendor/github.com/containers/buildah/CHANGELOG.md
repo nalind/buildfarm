@@ -2,33 +2,226 @@
 
 # Changelog
 
-## v1.33.8 (2024-05-17)
+## vv1.37.0 (2024-07-26)
 
-    [release-1.33] Bump c/image v5.29.3, c/common v0.57.5, CVE-2024-3727
+    Bump c/storage, c/image, c/common for v1.37.0
+    "build with basename resolving user arg" tests: correct ARG use
+    bud-multiple-platform-no-run test: correct ARG use
+    imagebuildah: always have default values for $TARGET... args ready
+    bump github.com/openshift/imagebuilder to v1.2.14
+    fix(deps): update module github.com/docker/docker to v27.1.1+incompatible
+    fix(deps): update module github.com/cyphar/filepath-securejoin to v0.3.1
+    fix(deps): update module github.com/docker/docker to v27.1.0+incompatible
+    CI: use local registry, part 2 of 2
+    CI: use local registry, part 1 of 2
+    fix(deps): update module github.com/fsouza/go-dockerclient to v1.11.1
+    Revert "fix(deps): update github.com/containers/image/v5 to v5.31.1"
+    Replace libimage.LookupReferenceFunc with the manifests version
+    conformance tests: enable testing CompatVolumes
+    conformance tests: add a test that tries to chown a volume
+    imagebuildah: make traditional volume handling not the default
+    StageExecutor.prepare(): mark base image volumes for preservation
+    fix(deps): update module github.com/containers/image/v5 to v5.31.1
+    Vendor in latest containers/(common, storage, image)
+    fix(deps): update module golang.org/x/term to v0.22.0
+    fix(deps): update module golang.org/x/sys to v0.22.0
+    fix(deps): update golang.org/x/exp digest to 7f521ea
+    fix(deps): update github.com/containers/luksy digest to a8846e2
+    imagebuildah.StageExecutor.Copy(): reject new flags for now
+    bump github.com/openshift/imagebuilder to v1.2.11
+    Rework parsing of --pull flags
+    fix(deps): update module github.com/containers/image/v5 to v5.31.1
+    imagebuildah.StageExecutor.prepare(): log the --platform flag
+    CI VMs: bump
+    buildah copy: preserve owner info with --from= a container or image
+    conformance tests: enable testing CompatSetParent
+    containerImageRef.NewImageSource(): move the FROM comment to first
+    commit: set "parent" for docker format only when requested
+    Update godoc for Builder.EnsureContainerPathAs
+    fix(deps): update module github.com/spf13/cobra to v1.8.1
+    fix(deps): update module github.com/containernetworking/cni to v1.2.0
+    fix(deps): update module github.com/opencontainers/runc to v1.1.13
+    Change default for podman build to --pull missing
+    fix(deps): update module github.com/containers/common to v0.59.1
+    Clarify definition of --pull options
+    buildah: fix a nil pointer reference on FreeBSD
+    Use /var/tmp for $TMPDIR for vfs conformance jobs
+    Cirrus: run `df` during job setup
+    conformance: use quay.io/libpod/centos:7 instead of centos:8
+    Stop setting "parent" in docker format
+    conformance: check if workdir trims path separator suffixes
+    push integration test: pass password to docker login via stdin
+    Re-enable the "copy with chown" conformance test
+    healthcheck: Add support for `--start-interval`
+    fix(deps): update module github.com/docker/docker to v26.1.4+incompatible
+    fix(deps): update module github.com/containerd/containerd to v1.7.18
+    tests: set _CONTAINERS_USERNS_CONFIGURED=done for libnetwork
+    Cross-build on Fedora
+    Drop copyStringSlice() and copyStringStringMap()
+    fix(deps): update module golang.org/x/crypto to v0.24.0
+    fix(deps): update module github.com/openshift/imagebuilder to v1.2.10
+    Provide an uptime_netbsd.go
+    Spell unix as "!windows"
+    Add netbsd to lists-of-OSes
+    fix(deps): update golang.org/x/exp digest to fd00a4e
+    [skip-ci] Packit: enable c10s downstream sync
+    CI VMs: bump, to debian with cgroups v2
+    Document when BlobDirectory is overridden
+    fix secret mounts for env vars when using chroot isolation
+    Change to take a types.ImageReference arg
+    imagebuildah: Support custom image reference lookup for cache push/pull
+    fix(deps): update module github.com/onsi/ginkgo/v2 to v2.19.0
+    Bump to v1.37.0-dev
+    CI: Clarify Debian use for conformance tests
+
+## v1.36.0 (2024-05-23)
+
+    build: be more selective about specifying the default OS
+    Bump to c/common v0.59.0
+    Fix buildah prune --help showing the same example twice
+    fix(deps): update module github.com/onsi/ginkgo/v2 to v2.18.0
+    fix(deps): update module github.com/containers/image/v5 to v5.31.0
+    bud tests: fix breakage when vendoring into podman
+    Integration tests: fake up a replacement for nixery.dev/shell
+    copierWithSubprocess(): try to capture stderr on io.ErrClosedPipe
+    Don't expand RUN heredocs ourselves, let the shell do it
+    Don't leak temp files on failures
+    Add release note template to split dependency chores
+    fix CentOS/RHEL build - no BATS there
+    fix(deps): update module github.com/containers/luksy to v0.0.0-20240506205542-84b50f50f3ee
+    Address CVE-2024-3727
+    chore(deps): update module github.com/opencontainers/runtime-spec to v1.2.0
+    Builder.cdiSetupDevicesInSpecdefConfig(): use configured CDI dirs
+    Setting --arch should set the TARGETARCH build arg
+    fix(deps): update module golang.org/x/exp to v0.0.0-20240416160154-fe59bbe5cc7f
+    [CI:DOCS] Add link to Buildah image page to README.md
+    Don't set GOTOOLCHAIN=local
+    fix(deps): update module github.com/cyphar/filepath-securejoin to v0.2.5
+    Makefile: set GOTOOLCHAIN=local
+    Integration tests: switch some base images
+    containerImageRef.NewImageSource: merge the tar filters
+    fix(deps): update module github.com/onsi/ginkgo/v2 to v2.17.2
+    fix(deps): update module github.com/containers/luksy to v0.0.0-20240408185936-afd8e7619947
+    Disable packit builds for centos-stream+epel-next-8
+    Makefile: add missing files to $(SOURCES)
+    CI VMs: bump to new versions with tmpfs /tmp
+    chore(deps): update module golang.org/x/net to v0.23.0 [security]
     integration test: handle new labels in "bud and test --unsetlabel"
-    [release-1.33] Bump go-jose CVE-2024-28180
-    [release-1.33] Bump ocicrypt and go-jose CVE-2024-28180
+    Switch packit configuration to use epel-9-$arch ...
+    Give unit tests a bit more time
+    Integration tests: remove a couple of duplicated tests
+    Integration tests: whitespace tweaks
+    Integration tests: don't remove images at start or end of test
+    Integration tests: use cached images more
+    Integration tests _prefetch: use registry configs
+    internal: use fileutils.(Le|E)xists
+    pkg/parse: use fileutils.(Le|E)xists
+    buildah: use fileutils.(Le|E)xists
+    chroot: use fileutils.(Le|E)xists
+    vendor: update containers/(common|storage)
+    Fix issue/pr lock workflow
+    [CI:DOCS] Add golang 1.21 update warning
+    heredoc: honor inline COPY irrespective of ignorefiles
+    Update install.md
+    source-push: add support for --digestfile
+    Fix caching when mounting a cached stage with COPY/ADD
+    fix(deps): update github.com/containers/luksy digest to 3d2cf0e
+    Makefile: softcode `strip`, use it from env var
+    Man page updates
+    Add support for passing CDI specs to --device
+    Update comments on some API objects
+    pkg/parse.DeviceFromPath(): dereference src symlinks
+    fix(deps): update module github.com/onsi/ginkgo/v2 to v2.17.1
 
-## v1.33.7 (2024-03-18)
+## v1.35.0 (2024-03-06)
 
-    CVE-2024-1753 container escape fix
+    fix(deps): update module github.com/stretchr/testify to v1.9.0
+    cgroups: reuse version check from c/common
+    Update vendor of containers/(common,image)
+    fix(deps): update github.com/containers/storage digest to eadc620
+    fix(deps): update github.com/containers/luksy digest to ceb12d4
+    fix(deps): update github.com/containers/image/v5 digest to cdc6802
+    manifest add: complain if we get artifact flags without --artifact
+    Use retry logic from containers/common
+    Vendor in containers/(storage,image,common)
+    Update module golang.org/x/crypto to v0.20.0
+    Add comment re: Total Success task name
     tests: skip_if_no_unshare(): check for --setuid
+    Properly handle build --pull=false
+    [skip-ci] Update tim-actions/get-pr-commits action to v1.3.1
+    Update module go.etcd.io/bbolt to v1.3.9
+    Revert "Reduce official image size"
+    Update module github.com/opencontainers/image-spec to v1.1.0
+    Reduce official image size
+    Build with CNI support on FreeBSD
+    build --all-platforms: skip some base "image" platforms
+    Bump main to v1.35.0-dev
+    Vendor in latest containers/(storage,image,common)
+    Split up error messages for missing --sbom related flags
+    `buildah manifest`: add artifact-related options
+    cmd/buildah/manifest.go: lock lists before adding/annotating/pushing
+    cmd/buildah/manifest.go: don't make struct declarations aliases
+    Use golang.org/x/exp/slices.Contains
+    Disable loong64 again
+    Fix a couple of typos in one-line comments
+    egrep is obsolescent; use grep -E
+    Try Cirrus with a newer VM version
+    Set CONTAINERS_CONF in the chroot-mount-flags integration test
+    Update to match dependency API update
+    Update github.com/openshift/imagebuilder and containers/common
+    docs: correct default authfile path
+    fix(deps): update module github.com/containerd/containerd to v1.7.13
+    tests: retrofit test for heredoc summary
+    build, heredoc: show heredoc summary in build output
+    manifest, push: add support for --retry and --retry-delay
+    fix(deps): update github.com/openshift/imagebuilder digest to b767bc3
+    imagebuildah: fix crash with empty RUN
+    fix(deps): update github.com/containers/luksy digest to b62d551
+    fix(deps): update module github.com/opencontainers/runc to v1.1.12 [security]
+    fix(deps): update module github.com/moby/buildkit to v0.12.5 [security]
+    Make buildah match podman for handling of ulimits
+    docs: move footnotes to where they're applicable
+    Allow users to specify no-dereference
+    Run codespell on code
+    Fix FreeBSD version parsing
+    Fix a build break on FreeBSD
+    Remove a bad FROM line
+    fix(deps): update module github.com/onsi/gomega to v1.31.1
+    fix(deps): update module github.com/opencontainers/image-spec to v1.1.0-rc6
+    docs: use reversed logo for dark theme in README
+    build,commit: add --sbom to scan and produce SBOMs when committing
+    commit: force omitHistory if the parent has layers but no history
+    docs: fix a couple of typos
+    internal/mkcw.Archive(): handle extra image content
+    stage_executor,heredoc: honor interpreter in heredoc
+    stage_executor,layers: burst cache if heredoc content is changed
+    fix(deps): update module golang.org/x/crypto to v0.18.0
+    Replace map[K]bool with map[K]struct{} where it makes sense
+    fix(deps): update module golang.org/x/sync to v0.6.0
+    fix(deps): update module golang.org/x/term to v0.16.0
+    Bump CI VMs
+    Replace strings.SplitN with strings.Cut
+    fix(deps): update github.com/containers/storage digest to ef81e9b
+    fix(deps): update github.com/containers/image/v5 digest to 1b221d4
+    fix(deps): update module github.com/fsouza/go-dockerclient to v1.10.1
+    Document use of containers-transports values in buildah
+    fix(deps): update module golang.org/x/crypto to v0.17.0 [security]
+    chore(deps): update dependency containers/automation_images to v20231208
+    manifest: addCompression use default from containers.conf
+    commit: add a --add-file flag
+    mkcw: populate the rootfs using an overlay
+    chore(deps): update dependency containers/automation_images to v20230517
+    [skip-ci] Update actions/stale action to v9
+    fix(deps): update module github.com/containernetworking/plugins to v1.4.0
+    fix(deps): update github.com/containers/image/v5 digest to 7a40fee
+    Bump to v1.34.1-dev
+    Ignore errors if label.Relabel returns ENOSUP
 
-## v1.33.6 (2024-02-14)
+## v1.34.0 (2023-12-11)
 
-    [release-1.33] Bump golang.org/x/crypto v0.17.0
-
-## v1.33.5 (2024-02-01)
-
-    Bump c/common to v0.57.4, moby/buildkit v0.5.12
-
-## v1.33.4 (2024-01-30)
-
-    Bump c/image to v5.29.2 and c/common to v0.57.3
-
-## v1.33.3 (2024-01-18)
-
-    Bump c/common to 0.57.2 and c/image to 5.29.1
+    vendor: update c/{common,image,storage}
+    run: Allow using just one jail per container on FreeBSD
+    Remove makefile targets entrypoint{,.gz} for non x86_64
 
 ## v1.33.2 (2023-11-22)
 

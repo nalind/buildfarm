@@ -12,7 +12,6 @@ import (
 	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/docker"
 	internalUtil "github.com/containers/buildah/internal/util"
-	"github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/pkg/compression"
 	"github.com/containers/image/v5/transports"
@@ -20,6 +19,8 @@ import (
 	"github.com/containers/storage/pkg/stringid"
 	ociv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // unmarshalConvertedConfig obtains the config blob of img valid for the wantedManifestMIMEType format
@@ -91,8 +92,13 @@ func (b *Builder) initConfig(ctx context.Context, img types.Image, sys *types.Sy
 			if err := json.Unmarshal(b.Manifest, &v1Manifest); err != nil {
 				return fmt.Errorf("parsing OCI manifest %q: %w", string(b.Manifest), err)
 			}
-			for k, v := range v1Manifest.Annotations {
-				b.ImageAnnotations[k] = v
+			if len(v1Manifest.Annotations) > 0 {
+				if b.ImageAnnotations == nil {
+					b.ImageAnnotations = make(map[string]string, len(v1Manifest.Annotations))
+				}
+				for k, v := range v1Manifest.Annotations {
+					b.ImageAnnotations[k] = v
+				}
 			}
 		}
 	}
@@ -158,7 +164,7 @@ func (b *Builder) setupLogger() {
 
 // Annotations returns a set of key-value pairs from the image's manifest.
 func (b *Builder) Annotations() map[string]string {
-	return copyStringStringMap(b.ImageAnnotations)
+	return maps.Clone(b.ImageAnnotations)
 }
 
 // SetAnnotation adds or overwrites a key's value from the image's manifest.
@@ -180,7 +186,7 @@ func (b *Builder) UnsetAnnotation(key string) {
 // ClearAnnotations removes all keys and their values from the image's
 // manifest.
 func (b *Builder) ClearAnnotations() {
-	b.ImageAnnotations = map[string]string{}
+	b.ImageAnnotations = nil
 }
 
 // CreatedBy returns a description of how this image was built.
@@ -223,16 +229,16 @@ func (b *Builder) SetOSVersion(version string) {
 // OSFeatures returns a list of OS features which the container, or a container
 // built using an image built from this container, depends on the OS supplying.
 func (b *Builder) OSFeatures() []string {
-	return copyStringSlice(b.OCIv1.OSFeatures)
+	return slices.Clone(b.OCIv1.OSFeatures)
 }
 
 // SetOSFeature adds a feature of the OS which the container, or a container
 // built using an image built from this container, depends on the OS supplying.
 func (b *Builder) SetOSFeature(feature string) {
-	if !util.StringInSlice(feature, b.OCIv1.OSFeatures) {
+	if !slices.Contains(b.OCIv1.OSFeatures, feature) {
 		b.OCIv1.OSFeatures = append(b.OCIv1.OSFeatures, feature)
 	}
-	if !util.StringInSlice(feature, b.Docker.OSFeatures) {
+	if !slices.Contains(b.Docker.OSFeatures, feature) {
 		b.Docker.OSFeatures = append(b.Docker.OSFeatures, feature)
 	}
 }
@@ -241,7 +247,7 @@ func (b *Builder) SetOSFeature(feature string) {
 // container built using an image built from this container, depends on the OS
 // supplying.
 func (b *Builder) UnsetOSFeature(feature string) {
-	if util.StringInSlice(feature, b.OCIv1.OSFeatures) {
+	if slices.Contains(b.OCIv1.OSFeatures, feature) {
 		features := make([]string, 0, len(b.OCIv1.OSFeatures))
 		for _, f := range b.OCIv1.OSFeatures {
 			if f != feature {
@@ -250,7 +256,7 @@ func (b *Builder) UnsetOSFeature(feature string) {
 		}
 		b.OCIv1.OSFeatures = features
 	}
-	if util.StringInSlice(feature, b.Docker.OSFeatures) {
+	if slices.Contains(b.Docker.OSFeatures, feature) {
 		features := make([]string, 0, len(b.Docker.OSFeatures))
 		for _, f := range b.Docker.OSFeatures {
 			if f != feature {
@@ -327,7 +333,7 @@ func (b *Builder) SetUser(spec string) {
 
 // OnBuild returns the OnBuild value from the container.
 func (b *Builder) OnBuild() []string {
-	return copyStringSlice(b.Docker.Config.OnBuild)
+	return slices.Clone(b.Docker.Config.OnBuild)
 }
 
 // ClearOnBuild removes all values from the OnBuild structure
@@ -363,7 +369,7 @@ func (b *Builder) SetWorkDir(there string) {
 // Shell returns the default shell for running commands in the
 // container, or in a container built using an image built from this container.
 func (b *Builder) Shell() []string {
-	return copyStringSlice(b.Docker.Config.Shell)
+	return slices.Clone(b.Docker.Config.Shell)
 }
 
 // SetShell sets the default shell for running
@@ -376,13 +382,13 @@ func (b *Builder) SetShell(shell []string) {
 		b.Logger.Warnf("SHELL is not supported for OCI image format, %s will be ignored. Must use `docker` format", shell)
 	}
 
-	b.Docker.Config.Shell = copyStringSlice(shell)
+	b.Docker.Config.Shell = slices.Clone(shell)
 }
 
 // Env returns a list of key-value pairs to be set when running commands in the
 // container, or in a container built using an image built from this container.
 func (b *Builder) Env() []string {
-	return copyStringSlice(b.OCIv1.Config.Env)
+	return slices.Clone(b.OCIv1.Config.Env)
 }
 
 // SetEnv adds or overwrites a value to the set of environment strings which
@@ -432,22 +438,22 @@ func (b *Builder) ClearEnv() {
 // set, to use when running a container built from an image built from this
 // container.
 func (b *Builder) Cmd() []string {
-	return copyStringSlice(b.OCIv1.Config.Cmd)
+	return slices.Clone(b.OCIv1.Config.Cmd)
 }
 
 // SetCmd sets the default command, or command parameters if an Entrypoint is
 // set, to use when running a container built from an image built from this
 // container.
 func (b *Builder) SetCmd(cmd []string) {
-	b.OCIv1.Config.Cmd = copyStringSlice(cmd)
-	b.Docker.Config.Cmd = copyStringSlice(cmd)
+	b.OCIv1.Config.Cmd = slices.Clone(cmd)
+	b.Docker.Config.Cmd = slices.Clone(cmd)
 }
 
 // Entrypoint returns the command to be run for containers built from images
 // built from this container.
 func (b *Builder) Entrypoint() []string {
 	if len(b.OCIv1.Config.Entrypoint) > 0 {
-		return copyStringSlice(b.OCIv1.Config.Entrypoint)
+		return slices.Clone(b.OCIv1.Config.Entrypoint)
 	}
 	return nil
 }
@@ -455,14 +461,14 @@ func (b *Builder) Entrypoint() []string {
 // SetEntrypoint sets the command to be run for in containers built from images
 // built from this container.
 func (b *Builder) SetEntrypoint(ep []string) {
-	b.OCIv1.Config.Entrypoint = copyStringSlice(ep)
-	b.Docker.Config.Entrypoint = copyStringSlice(ep)
+	b.OCIv1.Config.Entrypoint = slices.Clone(ep)
+	b.Docker.Config.Entrypoint = slices.Clone(ep)
 }
 
 // Labels returns a set of key-value pairs from the image's runtime
 // configuration.
 func (b *Builder) Labels() map[string]string {
-	return copyStringStringMap(b.OCIv1.Config.Labels)
+	return maps.Clone(b.OCIv1.Config.Labels)
 }
 
 // SetLabel adds or overwrites a key's value from the image's runtime
@@ -669,11 +675,12 @@ func (b *Builder) Healthcheck() *docker.HealthConfig {
 		return nil
 	}
 	return &docker.HealthConfig{
-		Test:        copyStringSlice(b.Docker.Config.Healthcheck.Test),
-		Interval:    b.Docker.Config.Healthcheck.Interval,
-		Timeout:     b.Docker.Config.Healthcheck.Timeout,
-		StartPeriod: b.Docker.Config.Healthcheck.StartPeriod,
-		Retries:     b.Docker.Config.Healthcheck.Retries,
+		Test:          slices.Clone(b.Docker.Config.Healthcheck.Test),
+		Interval:      b.Docker.Config.Healthcheck.Interval,
+		Timeout:       b.Docker.Config.Healthcheck.Timeout,
+		StartPeriod:   b.Docker.Config.Healthcheck.StartPeriod,
+		StartInterval: b.Docker.Config.Healthcheck.StartInterval,
+		Retries:       b.Docker.Config.Healthcheck.Retries,
 	}
 }
 
@@ -690,11 +697,12 @@ func (b *Builder) SetHealthcheck(config *docker.HealthConfig) {
 			b.Logger.Warnf("HEALTHCHECK is not supported for OCI image format and will be ignored. Must use `docker` format")
 		}
 		b.Docker.Config.Healthcheck = &docker.HealthConfig{
-			Test:        copyStringSlice(config.Test),
-			Interval:    config.Interval,
-			Timeout:     config.Timeout,
-			StartPeriod: config.StartPeriod,
-			Retries:     config.Retries,
+			Test:          slices.Clone(config.Test),
+			Interval:      config.Interval,
+			Timeout:       config.Timeout,
+			StartPeriod:   config.StartPeriod,
+			StartInterval: config.StartInterval,
+			Retries:       config.Retries,
 		}
 	}
 }
