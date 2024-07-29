@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/common/pkg/util"
 )
 
 const (
@@ -220,7 +220,7 @@ func checkIfEntryExists(current HostEntry, entries HostEntries) bool {
 		if current.IP == rm.IP {
 			// it is enough if one of the names match, in this case we remove the full entry
 			for _, name := range current.Names {
-				if util.StringInSlice(name, rm.Names) {
+				if slices.Contains(rm.Names, name) {
 					return true
 				}
 			}

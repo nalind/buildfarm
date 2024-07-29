@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libimage
 
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/common/libimage/manifests"
 	"github.com/containers/common/libimage/platform"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/retry"
@@ -32,12 +30,6 @@ const (
 	defaultMaxRetries = 3
 	defaultRetryDelay = time.Second
 )
-
-// LookupReferenceFunc return an image reference based on the specified one.
-// The returned reference can return custom ImageSource or ImageDestination
-// objects which intercept or filter blobs, manifests, and signatures as
-// they are read and written.
-type LookupReferenceFunc = manifests.LookupReferenceFunc
 
 // CopyOptions allow for customizing image-copy operations.
 type CopyOptions struct {
@@ -364,11 +356,13 @@ func (c *copier) copy(ctx context.Context, source, destination types.ImageRefere
 		defer cancel()
 		defer timer.Stop()
 
-		fmt.Fprintf(c.imageCopyOptions.ReportWriter,
-			"Pulling image %s inside systemd: setting pull timeout to %s\n",
-			source.StringWithinTransport(),
-			time.Duration(numExtensions)*extension,
-		)
+		if c.imageCopyOptions.ReportWriter != nil {
+			fmt.Fprintf(c.imageCopyOptions.ReportWriter,
+				"Pulling image %s inside systemd: setting pull timeout to %s\n",
+				source.StringWithinTransport(),
+				time.Duration(numExtensions)*extension,
+			)
+		}
 
 		// From `man systemd.service(5)`:
 		//
@@ -431,12 +425,12 @@ func (c *copier) copy(ctx context.Context, source, destination types.ImageRefere
 	// Sanity checks for Buildah.
 	if sourceInsecure != nil && *sourceInsecure {
 		if c.systemContext.DockerInsecureSkipTLSVerify == types.OptionalBoolFalse {
-			return nil, fmt.Errorf("can't require tls verification on an insecured registry")
+			return nil, errors.New("can't require tls verification on an insecured registry")
 		}
 	}
 	if destinationInsecure != nil && *destinationInsecure {
 		if c.systemContext.DockerInsecureSkipTLSVerify == types.OptionalBoolFalse {
-			return nil, fmt.Errorf("can't require tls verification on an insecured registry")
+			return nil, errors.New("can't require tls verification on an insecured registry")
 		}
 	}
 
@@ -516,8 +510,8 @@ func checkRegistrySourcesAllows(dest types.ImageReference) (insecure *bool, err 
 		return nil, fmt.Errorf("registry %q denied by policy: not in allowed registries list (%s)", reference.Domain(dref), registrySources)
 	}
 
-	for _, inseureDomain := range sources.InsecureRegistries {
-		if inseureDomain == reference.Domain(dref) {
+	for _, insecureDomain := range sources.InsecureRegistries {
+		if insecureDomain == reference.Domain(dref) {
 			insecure := true
 			return &insecure, nil
 		}
