@@ -1,8 +1,8 @@
-podman buildfarm/team/crew/bunch [![Cirrus CI Status](https://img.shields.io/cirrus/github/nalind/buildfarm/main)](https://cirrus-ci.com/github/nalind/buildfarm/main)
+podman buildfarm ~~/team/crew/bunch~~ [![Cirrus CI Status](https://img.shields.io/cirrus/github/nalind/buildfarm/main)](https://cirrus-ci.com/github/nalind/buildfarm/main)
 ==
-(still workshopping the name)
+~~(still workshopping the name)~~
 
-**This repository is a PoC for a feature in [podman](https://github.com/containers/podman), and once the feature arrives in a podman release, this repository will be archived.**
+**This repository was a PoC for the `farm build` feature which was merged for [podman](https://github.com/containers/podman) 5.0, and is no longer being updated.**
 
 What are we doing here?
 --
